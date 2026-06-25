@@ -115,9 +115,6 @@ Regression test CCC:
 
 | Method | NoXi | NoXi-Add | MPIIGI | NoXi-J | CCC Avg |
 |---|---:|---:|---:|---:|---:|
-| UniEE single seed | 0.796 | 0.747 | 0.718 | 0.593 | 0.714 |
-| UniEE 3-seed ensemble | 0.801 | 0.757 | 0.742 | 0.607 | 0.727 |
-| UniEE + TTA | 0.807 | 0.759 | 0.747 | 0.601 | 0.729 |
 | UniEE best | 0.807 | 0.759 | 0.747 | 0.636 | 0.737 |
 
 PInSoRo test Cohen's Kappa:
