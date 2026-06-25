@@ -1,0 +1,2 @@
+{"domain": "noxi_fr", "split": "full_val", "session_id": "007", "target_role": "expert", "partner_roles": ["novice"], "T": 33952, "n_features": 8, "label_type": "continuous", "has_label": true, "out_dir": "multimediate26/data_processed/npz_v3/noxi/007/expert"}
+{"domain": "noxi_fr", "split": "full_val", "session_id": "007", "target_role": "novice", "partner_roles": ["expert"], "T": 33952, "n_features": 8, "label_type": "continuous", "has_label": true, "out_dir": "multimediate26/data_processed/npz_v3/noxi/007/novice"}

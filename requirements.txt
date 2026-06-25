@@ -1,0 +1,14 @@
+# Pinned versions are intentionally loose — the host conda env already has
+# PyTorch / CUDA / FA2. Listed here for reproducibility & doc.
+torch>=2.3
+numpy>=1.24
+scipy>=1.10
+pyyaml>=6.0
+pandas>=2.0
+tqdm>=4.66
+einops>=0.7
+scikit-learn>=1.3
+# Optional (Phase 3a only)
+# decord>=0.6
+# transformers>=4.45
+# flash-attn>=2.5

@@ -1,0 +1,58 @@
+# MultiMediate'26 domain config — fine domains, coarse groups, eval metric.
+# Authoritative: ../MM26_Engagement_Estimation_TechPlan_v3.md §11.3
+
+# Coarse → fine mapping (drives hierarchical domain prompt + VLM instruction)
+coarse_groups:
+  conversational_adult: [noxi, noxi_j, noxi_add]
+  group_discussion:     [mpiigi]
+  child_freeplay:       [pinsoro_cc, pinsoro_cr]
+
+# Label schema per fine domain (drives loss head selection)
+label_space:
+  noxi:        {type: continuous, range: [0, 1]}
+  noxi_j:      {type: continuous, range: [0, 1]}
+  noxi_add:    {type: continuous, range: [0, 1]}
+  mpiigi:      {type: continuous, range: [0, 1]}
+  pinsoro_cc:  {type: categorical, task_classes: 3, social_classes: 5}
+  pinsoro_cr:  {type: categorical, task_classes: 3, social_classes: 5}
+
+# Eval metric per domain (used by trainer + ensemble for selection)
+eval_metric:
+  noxi:        ccc
+  noxi_j:      ccc
+  noxi_add:    ccc
+  mpiigi:      ccc
+  pinsoro_cc:  kappa
+  pinsoro_cr:  kappa
+
+# Phase 3 unseen-language fallback prompt (per v3 §4.3)
+# All NoXi-additional languages map to NoXi main prompt by default.
+unseen_lang_prior:
+  noxi_add_ar: noxi
+  noxi_add_it: noxi
+  noxi_add_id: noxi
+  noxi_add_es: noxi
+
+# Splits — paths relative to /mnt/pro-dtai/moe-lite/fenghui.zyf/mm_26/data/
+splits:
+  noxi:
+    train: NoXi/train
+    val:   NoXi/val
+    test:  NoXi/test-base
+  noxi_add:
+    test:  NoXi/test-additional
+  noxi_j:
+    train: Noxi-J/train
+    val:   Noxi-J/val
+    test:  Noxi-J/test
+  pinsoro_cc:
+    train: Pinsoro/train-cc
+    val:   Pinsoro/val-cc
+    test:  Pinsoro/test-cc
+  pinsoro_cr:
+    train: Pinsoro/train-cr
+    val:   Pinsoro/val-cr
+    test:  Pinsoro/test-cr
+  mpiigi:
+    val:   mpii/MultiMediate25/val
+    test:  mpii/MultiMediate25/test

@@ -1,0 +1,6 @@
+{"domain": "noxi_en", "session_id": "058", "target_role": "expert", "partner_roles": ["novice"], "out_dir": "multimediate26/data_processed/npz_v3/noxi/058/expert"}
+{"domain": "noxi_en", "session_id": "058", "target_role": "novice", "partner_roles": ["expert"], "out_dir": "multimediate26/data_processed/npz_v3/noxi/058/novice"}
+{"domain": "noxi_en", "session_id": "062", "target_role": "expert", "partner_roles": ["novice"], "out_dir": "multimediate26/data_processed/npz_v3/noxi/062/expert"}
+{"domain": "noxi_en", "session_id": "062", "target_role": "novice", "partner_roles": ["expert"], "out_dir": "multimediate26/data_processed/npz_v3/noxi/062/novice"}
+{"domain": "noxi_en", "session_id": "063", "target_role": "expert", "partner_roles": ["novice"], "out_dir": "multimediate26/data_processed/npz_v3/noxi/063/expert"}
+{"domain": "noxi_en", "session_id": "063", "target_role": "novice", "partner_roles": ["expert"], "out_dir": "multimediate26/data_processed/npz_v3/noxi/063/novice"}

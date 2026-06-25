@@ -1,0 +1,102 @@
+# Feature inventory — actual MultiMediate'26 release.
+#
+# Discrepancies vs TechPlan v3 §11.2 (raw data dictates):
+#   - "wav2vec2" → "w2vbert2"  (official upgraded to W2v-BERT 2.0)
+#   - "gemaps"   → "egemapsv2" (official ships eGeMAPSv2 directly)
+#   - "imagebind"→ NOT IN RELEASE; replaced by "swin" (Swin Transformer)
+#   - "openface" split into "openface2" + "openface3" (both shipped)
+#
+# All dims marked `?` are filled in by data/feature_extractor/probe_official.py
+# after sampling a few sessions. Values shown here come from the prior
+# (now-deleted) NPZ stats — kept as placeholders, MUST be re-verified.
+
+feature_dims:
+  # ── audio ──
+  w2vbert2:   1024   # was wav2vec2 in v3
+  egemapsv2:  88     # was gemaps in v3
+  whisper:    1280   # Whisper-large-v3 encoder last_hidden_state, 32 layers, d_model=1280
+  # ── text ──
+  xlmr:       768
+  # ── visual_behavior ──
+  openface2:  714    # includes frame index column (max = T)
+  openface3:  21     # sparse NaN cells from failed face detection
+  openpose:   139    # raw pixel coords; scale ~1.6k
+  # ── visual_semantic ──
+  videomae:   1408
+  dino:       768    # was dinov2 in v3
+  swin:       768    # VideoSwinTransformer; was incorrectly 1024 in earlier version
+  # ── cross_modal ──
+  clip:       512    # was 768 in v3 prior; actually ViT-B/32 per raw size
+  # ── vlm (optional, Phase 3 only) ──
+  qwen3vl_emb: 1024
+
+# Raw file naming inside each session dir
+# Format: {role}.<infix>.<feature_name>.stream   where role ∈ {expert, novice}
+# (or 4 PInSoRo equivalent role names). infix is "audio." for audio features.
+raw_paths:
+  w2vbert2:   "{role}.audio.w2vbert2_embeddings.stream"
+  egemapsv2:  "{role}.audio.egemapsv2.stream"
+  whisper:    "{role}.audio.whisper.npy"
+  xlmr:       "{role}.audio.xlm_roberta_embeddings.stream"
+  openface2:  "{role}.openface2.stream"
+  openface3:  "{role}.openface3.stream"
+  openpose:   "{role}.openpose.stream"
+  videomae:   "{role}.videomae.stream"
+  dino:       "{role}.dino.stream"
+  swin:       "{role}.swin.stream"
+  clip:       "{role}.clip.stream"
+  # qwen3vl_emb has no raw stream; produced by extract_vlm_embedding.py
+
+# Native sampling rate (Hz) per feature — used by align_features.py to
+# decide pool vs interp.  All resampled to 25 Hz.
+native_rate_hz:
+  w2vbert2:   25     # SSI header claims 40 on NoXi family but actual data is 25 (overridden in build_session_npz)
+  egemapsv2:  100
+  whisper:    25     # extract_whisper.py pools encoder 50 Hz output → 25 Hz
+  xlmr:       25     # XLM-R embeddings exported at 25Hz per official README
+  openface2:  25
+  openface3:  25
+  openpose:   25
+  videomae:   25     # already at frame rate per official export
+  dino:       25
+  swin:       25
+  clip:       25
+
+# Presets for trainer --features flag
+presets:
+  minimal:
+    [openface2, w2vbert2, xlmr]
+  audio_text_visual:
+    [openface2, openpose, w2vbert2, egemapsv2, xlmr]
+  # MM26 main preset — intersection of:
+  #   * winner HFUT-LMC (DAPA): egemaps + Swin + OpenFace + OpenPose + Whisper
+  #     (Whisper unavailable in current data ⇒ substitute w2vbert2)
+  #   * our 2025 USTC-IAT (8x sliding): egemaps + W2vBERT2 + XLM-R + CLIP + OpenFace + OpenPose
+  # plus openface3 (PInSoRo's best single feature) and swin (DAPA top video).
+  # videomae + dino EXCLUDED — both score ~0 on mpii zero-shot in the official
+  # baseline and inflate storage by 2 GB/session for negligible gain.
+  mm26_main:
+    [openface2, openface3, openpose, w2vbert2, egemapsv2, xlmr, swin, clip]
+  # 9-feat preset — adds whisper (DAPA paper's best audio backbone).
+  mm26_whisper:
+    [openface2, openface3, openpose, w2vbert2, egemapsv2, whisper, xlmr, swin, clip]
+  # 11-feat preset — adds videomae + dino to mm26_whisper for PInSoRo (which has them)
+  # and other domains. NoXi/NoXi-J/mpii ship videomae+dino too; PInSoRo benefits
+  # additionally from having these per its 'env' partner camera.
+  mm26_whisper_full:
+    [openface2, openface3, openpose, w2vbert2, egemapsv2, whisper, xlmr, videomae, dino, swin, clip]
+  official_full:
+    [openface2, openface3, openpose, w2vbert2, egemapsv2, xlmr, videomae, dino, swin, clip]
+  official_full_whisper:
+    [openface2, openface3, openpose, w2vbert2, egemapsv2, whisper, xlmr, videomae, dino, swin, clip]
+  official_full_plus_vlm:
+    [openface2, openface3, openpose, w2vbert2, egemapsv2, xlmr, videomae, dino, swin, clip, qwen3vl_emb]
+
+# Modality grouping for ModalityGroupFusion (v3 §4.2)
+groups:
+  audio:           [w2vbert2, egemapsv2, whisper]
+  text:            [xlmr]
+  visual_behavior: [openface2, openface3, openpose]
+  visual_semantic: [videomae, dino, swin]
+  cross_modal:     [clip]
+  vlm:             [qwen3vl_emb]

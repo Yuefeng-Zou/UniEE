@@ -1,0 +1,48 @@
+# MultiMediate'26 base config (model + train).
+# Authoritative: ../MM26_Engagement_Estimation_TechPlan_v3.md §11.1
+
+model:
+  hidden_dim: 384
+  n_heads: 4
+  n_dapa_layers: 3
+  fusion_layers: 1
+  dropout: 0.15
+  n_prompts_coarse: 4
+  n_prompts_fine: 8
+  max_partners: 4
+
+train:
+  batch_size: 6
+  window_len: 1024
+  weight_decay: 1.0e-4
+  warmup_steps: 1000
+  total_steps: 50000
+  ema_decay: 0.999
+  grad_clip: 1.0
+  use_bf16: true
+  num_workers: 1            # Alluxio FUSE chokes with high concurrency
+  cache_sessions: 4
+  normalize_clip: 5.0       # post-z-score clip range
+  selection_metric: auto    # auto → per_domain_mean if val has >1 domain else concat_ccc
+
+loss_weights:
+  ccc:        1.0
+  mse:        0.3
+  smooth:     0.05
+  task_ce:    1.0
+  social_ce:  1.0
+  bridge_ccc: 0.0          # Phase 3 turns this on (≈0.3) once bridge MLP warms up
+  ordinal:    0.0          # Phase 3 turns this on (≈0.1)
+
+# Layer-wise learning rates (v3 §6.3). vlm_gate only present when qwen3vl_emb used.
+lr_groups:
+  projector:     1.0e-4
+  group_fusion:  1.0e-4
+  dapa_layers:   1.0e-4
+  partner_pool:  1.0e-4
+  heads:         5.0e-4
+  bridge:        5.0e-4
+  domain_prompt: 1.0e-3
+  vlm_gate:      1.0e-3
+
+schedule: cosine

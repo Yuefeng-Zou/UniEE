@@ -1,0 +1,25 @@
+# Qwen3-VL-Embedding-8B instructions per coarse domain.
+# Authoritative: ../MM26_Engagement_Estimation_TechPlan_v3.md §11.4
+#
+# Instruction is the task-level system message (shared across all samples in
+# the coarse group). The per-sample transcript goes into the user message and
+# MUST NOT be concatenated here.
+
+instructions:
+  conversational_adult: |
+    Represent this dyadic conversation segment for engagement
+    estimation. Focus on the participant's attention, emotional
+    involvement, facial expressions, gaze direction, body posture,
+    and reciprocal interaction with the conversational partner.
+
+  group_discussion: |
+    Represent this group discussion segment for engagement
+    estimation. Focus on each participant's listening behavior,
+    turn-taking patterns, gaze distribution among partners, and
+    active versus passive participation in the group.
+
+  child_freeplay: |
+    Represent this child play interaction for social and task
+    engagement assessment. Focus on the child's attention to
+    activities, peer interaction patterns, play style (solitary,
+    parallel, cooperative), and goal-directedness of behavior.

@@ -1,0 +1,27 @@
+# ── 训练产物 ──
+.codegraph/
+multimediate26/output/
+multimediate26/data_processed/
+multimediate26/run_logs
+run_logs/
+*.npz
+*.npy
+*.ckpt
+*.pt
+*.bin
+
+# ── python ──
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# ── editor / OS ──
+.vscode/
+.idea/
+.DS_Store
+
+# ── 系统/容器临时 ──
+nohup.out
+*.log
+.cc_test_*
