@@ -1,290 +1,317 @@
-# MultiMediate'26 Engagement Estimation — MD-DAPA
+# UniEE
 
-**Multi-Domain Dual-Aspect Partner Attention (MD-DAPA)** for the [MultiMediate'26](https://multimediate-challenge.org/) cross-cultural multi-domain engagement estimation challenge.
+**Unified Regression-Classification Engagement Estimation via Hierarchical Multimodal Fusion and Multi-Party Interaction**
 
-## Overview
+This repository contains the source code for UniEE, our MultiMediate'26 multi-domain engagement estimation system. UniEE is designed for the new MultiMediate'26 setting where engagement estimation is no longer only continuous regression under ordinary domain shift: the benchmark also introduces heterogeneous label semantics, heterogeneous feature families, and heterogeneous interaction structures.
 
-Frame-wise engagement prediction across 5 test domains spanning four simultaneous transfer axes: unseen languages, age, social setting, and label semantics (regression vs classification). The final score is the simple mean of per-domain metrics (CCC for regression domains, Cohen's Kappa for PInSoRo classification domains).
+## Background
 
-| Domain | Language | Setting | Label | Metric |
+Engagement estimation predicts how engaged each participant is at every frame of an interaction. Earlier MultiMediate systems mainly treated engagement as a continuous regression problem, but MultiMediate'26 combines several transfer axes in a single benchmark:
+
+- Language shift: English/French/German/Japanese/Chinese in training, plus Arabic/Italian/Indonesian/Spanish zero-shot test languages.
+- Age and social setting shift: adult dyadic conversations, adult group discussions, and child free-play sessions.
+- Interaction-structure shift: dyadic partner modeling for NoXi-style data and multi-party partner modeling for MPIIGI.
+- Label-semantics shift: CCC regression for NoXi, NoXi-Additional, NoXi-J, and MPIIGI; Cohen's Kappa classification for PInSoRo task/social engagement.
+
+UniEE addresses these shifts by keeping DAPA's reactive/anticipatory interaction backbone and extending it with regression-classification unification, hierarchical multimodal fusion, and attention-based multi-party pooling.
+
+## Contributions
+
+1. **Label-semantics unification.** UniEE jointly models continuous CCC domains and categorical PInSoRo domains. A Learnable Bridge maps PInSoRo task/social class probabilities into a pseudo-continuous engagement space so classification supervision can contribute to the shared representation.
+
+2. **Hierarchical multimodal fusion.** The final model uses an 11-feature full preset with 7,490 input dimensions. Features are organized into five semantic groups and fused by intra-group and inter-group Transformer encoders.
+
+3. **Multi-party interaction modeling.** UniEE extends dyadic DAPA-style target-partner modeling to MPIIGI group discussions through learnable attention pooling over multiple partners.
+
+## Challenge Domains
+
+| Domain | Languages | Setting | Label | Metric |
 |---|---|---|---|---|
-| NoXi | en / fr / de | Dyadic adult | Continuous [0,1] | CCC |
-| NoXi-additional | ar / it / id / es | Dyadic adult (zero-shot) | Continuous [0,1] | CCC |
-| NoXi-J | ja / zh | Dyadic adult | Continuous [0,1] | CCC |
-| MPIIGroupInteraction | de | Group discussion | Continuous [0,1] | CCC |
-| PInSoRo (CC+CR) | — | Child freeplay | Categorical (4 task + 5 social classes) | Cohen's Kappa |
+| NoXi | en / fr / de | Dyadic adult conversation | Continuous [0, 1] | CCC |
+| NoXi-Additional | ar / it / id / es | Zero-shot dyadic adult conversation | Continuous [0, 1] | CCC |
+| NoXi-J | ja / zh | Dyadic adult conversation | Continuous [0, 1] | CCC |
+| MPIIGI | de | 3-4 person group discussion | Continuous [0, 1] | CCC |
+| PInSoRo CC / CR | child free play | Child-human/robot interaction | 4 task + 5 social classes | Cohen's Kappa |
 
-## Architecture
+Manifest statistics in this repository:
 
+| Domain | Train sessions | Val sessions | Test sessions | Labeled train roles |
+|---|---:|---:|---:|---:|
+| NoXi | 38 | 10 | 16 | 76 |
+| NoXi-Additional | 0 | 0 | 12 | 0 |
+| NoXi-J | 31 | 10 | 10 | 62 |
+| MPIIGI | 4* | 2* | 6 | 14 |
+| PInSoRo CC | 20 | 7 | 6 | 40 |
+| PInSoRo CR | 12 | 5 | 6 | 24 |
+
+`*` MPIIGI has no official training split, so the code uses a 4-session train / 2-session held-validation split from its validation set. Across all splits, the manifests contain 195 source sessions and 470 session-role entries, of which 287 are labeled. PInSoRo's `env` stream is used as contextual input but has no engagement label.
+
+## Method Overview
+
+```text
+11 aligned feature streams
+  -> per-feature projection: Linear + LayerNorm + GELU
+  -> hierarchical ModalityGroupFusion
+  -> HierarchicalDomainPrompt
+  -> MultiPartnerPooling
+  -> 3 x DAPA reactive/anticipatory cross-attention layers
+  -> regression head + PInSoRo classification heads + LearnableBridge
 ```
-Input Features (12 modalities)
-  → ModalityProjector (per-feature Linear + LN + GELU)
-  → ModalityGroupFusion (6 semantic groups, two-level Transformer)
-  → HierarchicalDomainPrompt (3 coarse groups × 5 fine domains)
-  → DAPALayer × N (BiLSTM → Reactive/Anticipatory cross-attention)
-  → MultiPartnerPooling (learnable query attention over partners)
-  → DualTaskHead + LearnableBridge
+
+Model settings:
+
+| Item | Value |
+|---|---:|
+| Hidden dimension | 384 |
+| DAPA layers | 3 |
+| Attention heads | 4 |
+| Dropout | 0.15 |
+| Prompt tokens | 4 coarse + 8 fine |
+| Coarse prompt groups | conversational_adult, group_discussion, child_freeplay |
+| Classification classes | 4 task + 5 social |
+| Parameters, 11-feature model | 18.017M |
+
+The bridge uses hand-coded ordinal priors to create a pseudo-continuous PInSoRo target:
+
+```text
+pseudo = 0.5 * task_prior[task_class] + 0.5 * social_prior[social_class]
 ```
 
-### Key Design Choices
+Task priors are `(0.80, 0.40, 0.10, 0.55)` for `goaloriented, aimless, noplay, adultseeking`; social priors are `(0.10, 0.30, 0.50, 0.70, 0.90)` for `solitary, onlooker, parallel, associative, cooperative`.
 
-- **25 Hz common time grid**: All modalities resampled to 25 Hz regardless of native sample rate.
-- **ModalityGroupFusion**: Two-level Transformer — intra-group encoders fuse modalities within each semantic group (audio / text / visual-behavior / visual-semantic / cross-modal / VLM), then an inter-group encoder merges group representations.
-- **HierarchicalDomainPrompt**: Coarse-level (4 tokens, shared within group) + fine-level (8 tokens, per-domain). Three coarse groups: `conversational_adult`, `group_discussion`, `child_freeplay`. Unseen-language fallback: noxi-add → noxi prompt.
-- **DAPALayer**: BiLSTM on target/partner streams → split reactive (forward) / anticipatory (backward) → 4-way cross-attention (Reactive T←P, Reactive P←T, Anticipatory T←P, Anticipatory P←T).
-- **LearnableBridge**: Maps PInSoRo classification softmax → pseudo-continuous [0,1] so regression head receives gradient even on classification frames. Initialized to output ≈ 0.5 (training mean engagement).
-- **VLM gate**: `vlm_gate` initialized to `sigmoid(-3.0) ≈ 0.05` (nearly off), left for the model to open during Phase 3a.
+## Feature Set
 
-## Features
+The paper's final model uses the 11-feature full preset (`mm26_whisper_full`), totaling 7,490 dimensions after alignment.
 
-12 precomputed + optional VLM features (dimensions at 25 Hz):
+| Group | Feature | Dim |
+|---|---|---:|
+| Audio | w2vbert2 | 1024 |
+| Audio | egemapsv2 | 88 |
+| Audio | whisper | 1280 |
+| Text | xlmr | 768 |
+| Visual behavior | openface2 | 714 |
+| Visual behavior | openface3 | 21 |
+| Visual behavior | openpose | 139 |
+| Visual semantic | videomae | 1408 |
+| Visual semantic | dino | 768 |
+| Visual semantic | swin | 768 |
+| Cross-modal | clip | 512 |
 
-| Feature | Dim | Modality Group | Source |
+Other presets are defined in `configs/feature_specs.yaml`:
+
+| Preset | Number of features | Total dim | Use |
+|---|---:|---:|---|
+| `mm26_main` | 8 | 4034 | compact baseline |
+| `mm26_whisper` | 9 | 5314 | adds Whisper |
+| `official_full` | 10 | 6210 | official features without Whisper |
+| `mm26_whisper_full` | 11 | 7490 | final paper preset |
+| 11 + `qwen3vl_emb` | 12 | 8514 | optional VLM experiment |
+
+The optional Qwen3-VL experiment is implemented in `scripts/stage3a_vlm_experiment.sh`. It is analyzed as a negative/diagnostic feature experiment rather than used in the final model.
+
+## Results
+
+Regression test CCC:
+
+| Method | NoXi | NoXi-Add | MPIIGI | NoXi-J | CCC Avg |
+|---|---:|---:|---:|---:|---:|
+| UniEE single seed | 0.796 | 0.747 | 0.718 | 0.593 | 0.714 |
+| UniEE 3-seed ensemble | 0.801 | 0.757 | 0.742 | 0.607 | 0.727 |
+| UniEE + TTA | 0.807 | 0.759 | 0.747 | 0.601 | 0.729 |
+| UniEE best | 0.807 | 0.759 | 0.747 | 0.636 | 0.737 |
+
+PInSoRo test Cohen's Kappa:
+
+| Dimension | UniEE |
+|---|---:|
+| CC Task | 0.202 |
+| CC Social | 0.230 |
+| CR Task | 0.235 |
+| CR Social | 0.230 |
+| Average | 0.224 |
+
+Component ablation on CCC domains:
+
+| Configuration | NoXi | NoXi-Add | MPIIGI | NoXi-J | CCC Avg |
+|---|---:|---:|---:|---:|---:|
+| Full UniEE | 0.807 | 0.759 | 0.747 | 0.636 | 0.737 |
+| w/o ModalityGroupFusion | 0.794 | 0.762 | 0.643 | 0.608 | 0.702 |
+| w/o MultiPartnerPooling | 0.799 | 0.755 | 0.697 | 0.595 | 0.712 |
+
+## Source Code Tutorial
+
+### 1. Clone and Set the Package Path
+
+The code imports itself as `multimediate26`. Clone the repository into a directory named `multimediate26`, and run module commands from the parent directory:
+
+```bash
+git clone git@github.com:Yuefeng-Zou/UniEE.git multimediate26
+pip install -r multimediate26/requirements.txt
+```
+
+If you clone into a different directory name, either rename it to `multimediate26` or create an equivalent symlink.
+
+### 2. Prepare Raw Data
+
+Place the official MultiMediate'26 data under a local data root. The expected split layout is documented in `manifests/dataset_overview.md` and encoded in `data/feature_extractor/build_session_npz.py`.
+
+The main processed cache used by the 11-feature pipeline is:
+
+```text
+multimediate26/data_processed/npz_v4
+```
+
+This directory is intentionally not tracked by git.
+
+### 3. Build Per-Session Feature Caches
+
+Build 11-feature aligned `.npy` caches and manifests:
+
+```bash
+DATA_ROOT=/path/to/mm_26/data
+FEATURES_PRESET=mm26_whisper_full
+
+python -m multimediate26.data.feature_extractor.build_session_npz \
+  --data-root "$DATA_ROOT" \
+  --out-root multimediate26/data_processed/npz_v4 \
+  --preset "$FEATURES_PRESET" \
+  --manifest-dir multimediate26/manifests \
+  --skip-done
+```
+
+For a labeled-only training cache, add `--labeled-only`. For test inference, build without `--labeled-only` so unlabeled test sessions are included.
+
+Important preprocessing handled by the builder:
+
+| Issue | Handling |
+|---|---|
+| `w2vbert2` 40 Hz header mismatch | override to 25 Hz where required |
+| PInSoRo 30 Hz visual streams | interpolate to 25 Hz |
+| MPIIGI DINO 2304-dim streams | slice to 768 dims |
+| NaN / missing values | normalize, clip, and zero-fill |
+| PInSoRo categorical labels | save `label_task.npy`, `label_social.npy`, and `label_pseudo_cont.npy` |
+
+### 4. Compute Feature Statistics
+
+Compute z-score normalization statistics over the training manifests:
+
+```bash
+mkdir -p multimediate26/experiments/_feature_stats
+
+python -m multimediate26.data.feature_extractor.compute_feature_stats \
+  --npz-root multimediate26/data_processed/npz_v4 \
+  --manifests \
+    multimediate26/manifests/noxi_train.jsonl \
+    multimediate26/manifests/noxi_j_train.jsonl \
+    multimediate26/manifests/mpiigi_train.jsonl \
+    multimediate26/manifests/pinsoro_cc_train.jsonl \
+    multimediate26/manifests/pinsoro_cr_train.jsonl \
+  --features openface2,openface3,openpose,w2vbert2,egemapsv2,whisper,xlmr,videomae,dino,swin,clip \
+  --max-partners 3 \
+  --out multimediate26/experiments/_feature_stats/feature_stats_v4_whisper_full.npz
+```
+
+### 5. Train UniEE
+
+The standard curriculum is:
+
+| Phase | Domains | Purpose | Script |
 |---|---|---|---|
-| w2vbert2 | 1024 | audio | WavLM-BERT fused |
-| egemapsv2 | 88 | audio | OpenSMILE eGeMAPS |
-| whisper | 1280 | audio | Whisper-large-v3 encoder |
-| xlmr | 768 | text | XLM-RoBERTa |
-| openface2 | 714 | visual-behavior | OpenFace 2.0 AU |
-| openface3 | 21 | visual-behavior | OpenFace 3.0 head pose |
-| openpose | 139 | visual-behavior | OpenPose keypoints |
-| videomae | 1408 | visual-semantic | VideoMAE ViT-B/16 |
-| dino | 768 | visual-semantic | DINOv2 (first 768 dim) |
-| swin | 768 | visual-semantic | Swin Transformer |
-| clip | 512 | cross-modal | CLIP ViT-B/16 |
-| qwen3vl_emb | 1024 | vlm | Qwen3-VL-Embedding-8B (Phase 3a) |
+| Phase 1 | NoXi + NoXi-J | regression pretraining | `scripts/stage2_phase1_v2arch.sh` |
+| Phase 2 | NoXi + NoXi-J + MPIIGI | add multi-party regression | `scripts/stage3_phase2_v2arch.sh` |
+| Phase 3 | all five domains | add PInSoRo, bridge, ordinal loss | `scripts/stage4_phase3_v2arch.sh` |
 
-Feature presets in `configs/feature_specs.yaml`: `minimal`, `audio_text_visual`, `mm26_main` (8 features, primary), `mm26_whisper`, `mm26_whisper_full`, `official_full`, `official_full_whisper`, `official_full_plus_vlm`.
+Main training settings:
 
-## Training Pipeline
+| Setting | Value |
+|---|---:|
+| Window length | 512 frames |
+| Training stride | 64 frames |
+| Batch size | 32 |
+| EMA decay | 0.999 |
+| Gradient clip | 1.0 |
+| Warmup | 1000 steps |
+| Precision | bf16 |
+| Sampling | single-domain batches with sqrt-N domain weighting |
 
-### 3-Phase Curricular Training
+Example 11-feature run:
 
-**Phase 1 — Regression-only pretrain (NoXi + NoXi-J)**
-- Continuous-only, max_partners=1, lr=5e-5
-- Loss: CCC(1.0) + MSE(0.3) + Smooth(0.05)
-- 40 epochs, 200 steps/epoch, EMA 0.999
+```bash
+FEATURES="openface2,openface3,openpose,w2vbert2,egemapsv2,whisper,xlmr,videomae,dino,swin,clip"
+NPZ_ROOT=multimediate26/data_processed/npz_v4
+FEATURE_STATS=multimediate26/experiments/_feature_stats/feature_stats_v4_whisper_full.npz
 
-**Phase 2 — Joint with MPIIGI**
-- Init from Phase 1 best.pt, lr=3e-5, max_partners=3
-- Adds MPIIGI val sessions as quasi-train data
-- Same loss structure (bridge/ordinal still disabled)
+# Phase 1
+EXP_NAME=phase1_11feat \
+FEATURES="$FEATURES" \
+NPZ_ROOT="$NPZ_ROOT" \
+FEATURE_STATS="$FEATURE_STATS" \
+bash multimediate26/scripts/stage2_phase1_v2arch.sh
 
-**Phase 3 — Full 5-domain with PInSoRo**
-- Init from Phase 2 best.pt, lr=2e-5
-- Enables bridge_ccc=0.3, ordinal=0.1
-- Classification CE with label_smoothing=0.1
+# Phase 2
+EXP_NAME=phase2_11feat \
+FEATURES="$FEATURES" \
+NPZ_ROOT="$NPZ_ROOT" \
+FEATURE_STATS="$FEATURE_STATS" \
+INIT_FROM=multimediate26/output/phase1_11feat_seed0/best.pt \
+bash multimediate26/scripts/stage3_phase2_v2arch.sh
 
-**Phase 3a — VLM injection (optional)**
-- Init from Phase 2 best.pt with `init_new_modality()`, small std=0.01
-- Gated `qwen3vl_emb` (1024d) added as modality group
-- PInSoRo excluded (no video, ethics-restricted)
+# Phase 3
+EXP_NAME=phase3_11feat \
+FEATURES="$FEATURES" \
+NPZ_ROOT="$NPZ_ROOT" \
+FEATURE_STATS="$FEATURE_STATS" \
+INIT_FROM=multimediate26/output/phase2_11feat_seed0/best.pt \
+bash multimediate26/scripts/stage4_phase3_v2arch.sh
+```
 
-### PInSoRo Specialist Models
-- **MD-DAPA fine-tuned**: Phase 2 init → PInSoRo-only training with FocalLoss + inverse-freq class weights
-- **MLP baseline**: Per-frame MLP classifier mirroring official baseline, MinMaxScaler, independent task/social heads per domain
+The scripts expose `SEED`, `GPU`, `EPOCHS`, `BATCH`, `WINDOW_LEN`, `TRAIN_STRIDE`, `FEATURES`, `NPZ_ROOT`, `FEATURE_STATS`, and `INIT_FROM` as environment-variable overrides.
 
-### Training Features
-- Layer-wise LR groups (backbone lower, heads higher)
-- Cosine annealing with linear warmup
-- bf16 mixed precision autocast
-- Gradient clip 1.0
-- EMA (0.999, eval with EMA weights)
-- DomainBalancedBatchSampler (sqrt-N domain weighting, single-domain batches)
-- 8× sliding window augmentation (stride=64, window=512)
-- Resume from checkpoint (model + EMA only, fresh optimizer)
+### 6. Run Inference
 
-### Loss Functions
+Standalone inference:
 
-| Loss | Weight (Phase 1/2) | Weight (Phase 3) | Description |
-|---|---|---|---|
-| CCC | 1.0 | 1.0 | Lin's Concordance Correlation Coefficient (1−CCC) |
-| MSE | 0.3 | 0.3 | Masked mean squared error |
-| Smooth | 0.05 | 0.05 | L1 of temporal differences |
-| Bridge CCC | 0.0 | 0.3 | PInSoRo pseudo-continuous target supervises regression head |
-| Ordinal | 0.0 | 0.1 | Margin-based pairwise contrastive (cross-domain feature alignment) |
+```bash
+python -m multimediate26.train.inference \
+  --checkpoint multimediate26/output/phase3_11feat_seed0/best.pt \
+  --out-dir predictions/phase3_11feat_seed0 \
+  --features openface2,openface3,openpose,w2vbert2,egemapsv2,whisper,xlmr,videomae,dino,swin,clip \
+  --feature-stats multimediate26/experiments/_feature_stats/feature_stats_v4_whisper_full.npz \
+  --npz-root multimediate26/data_processed/npz_v4 \
+  --use-group-fusion
+```
 
-## Inference & Submission
+Paper inference uses 512-frame windows, Hann-window overlap-add, regression smoothing, three-seed ensembling, TTA over LayerNorm/domain-prompt parameters, and domain-specific checkpoint selection.
 
-### Multi-seed Ensemble
-- Val-CCC-weighted averaging across seeds
-- Hann-window overlap-add for temporal consistency
-- Optional Savitzky-Golay post-smoothing
+### 7. Validate and Zip Submission
 
-### Test-Time Adaptation (TTA) — two approaches
-
-1. **Prompt-only TTA** (`inference/tta.py`): Freezes entire model, optimizes 8-token domain prompt only. Smoothness + entropy minimization + range penalty. ~5–15s per session (10 steps).
-
-2. **LayerNorm + prompt TTA** (`train/tta.py`): Adapts LayerNorm + domain_prompt on unlabeled test data. Consistency + smoothness for regression, entropy minimization for classification. 3 epochs.
-
-### Submission Format
-- Regression domains: one float per line (`%.6f`)
-- PInSoRo classification: one class label string per line (task + social)
-- Validated and zipped by `submission/zip_and_check.py`
+```bash
+python -m multimediate26.submission.zip_and_check \
+  predictions/phase3_11feat_seed0 \
+  --zip predictions/phase3_11feat_seed0.zip \
+  --strict
+```
 
 ## Project Layout
 
-```
+```text
 multimediate26/
-├── configs/
-│   ├── base.yaml                     # Model + train hyperparameters
-│   ├── feature_specs.yaml            # 12 feature dims + presets
-│   ├── domain_config.yaml            # 5 fine domains + 3 coarse groups
-│   └── instruction_templates.yaml    # Qwen3-VL per-domain prompts
-├── data/
-│   ├── feature_extractor/
-│   │   ├── ssi_reader.py             # SSI XML header + binary mmap loader
-│   │   ├── align_features.py         # Resample all streams to 25 Hz
-│   │   ├── build_session_npz.py      # Main pipeline: raw → per-session .npy
-│   │   ├── compute_feature_stats.py  # NaN-safe per-channel mean/std
-│   │   ├── extract_whisper.py        # Whisper-large-v3 encoder extraction
-│   │   ├── extract_vlm_embedding.py  # Qwen3-VL-Embedding-8B extraction
-│   │   └── probe_official.py         # Verify actual feature dimensions
-│   ├── dataset.py                    # SessionDataset (z-score + clip + nan_to_num)
-│   ├── sampler.py                    # DomainBalancedBatchSampler
-│   └── label_loader.py              # Domain-dispatched label loading
-├── models/
-│   ├── md_dapa.py                    # Main model: MD-DAPA v2
-│   ├── modality_proj.py             # ModalityProjector + ModalityGroupFusion
-│   ├── domain_prompt.py             # HierarchicalDomainPrompt (coarse+fine)
-│   ├── domain_prompt_flat.py        # Ablation: flat single-level prompt
-│   ├── dapa_layer.py               # DAPA layer (reactive/anticipatory)
-│   ├── partner_pool.py             # MultiPartnerPooling (attention-based)
-│   ├── partner_pool_sum.py         # Ablation: parameter-free sum pooling
-│   ├── heads.py                    # RegressionHead + ClassificationHeads + LearnableBridge
-│   └── pinsoro_model.py            # PInSoRo specialist (BiLSTM + cross-attn)
-├── losses/
-│   ├── ccc_loss.py                 # CCC + MSE + Smoothness
-│   └── ordinal_contrastive.py      # Margin-based pairwise contrastive
-├── train/
-│   ├── trainer.py                  # 3-phase curricular trainer
-│   ├── pinsoro_trainer.py          # PInSoRo specialist trainer
-│   ├── pinsoro_mlp.py             # PInSoRo MLP baseline trainer
-│   ├── inference.py               # Standalone sliding-window inference
-│   ├── tta.py                     # LayerNorm + prompt TTA
-│   ├── tta_inference.py           # Combined TTA + inference per seed
-│   └── ensemble.py                # Multi-seed/window ensemble + smoothing
-├── inference/
-│   ├── run_test.py                # Full inference pipeline (multi-seed + TTA)
-│   └── tta.py                     # Prompt-only TTA
-├── submission/
-│   ├── writer.py                  # Official format CSV writer
-│   └── zip_and_check.py           # Validate + create submission ZIP
-├── scripts/
-│   ├── stage2_phase1_pretrain.sh   # Phase 1 training
-│   ├── stage2_phase1_v2arch.sh     # Phase 1 with v2arch
-│   ├── stage2_phase1_whisper.sh    # Phase 1 with whisper features
-│   ├── stage3_phase2_joint.sh     # Phase 2 joint training
-│   ├── stage3_phase2_v2arch.sh    # Phase 2 v2arch
-│   ├── stage4_phase3_v2arch.sh    # Phase 3 v2arch
-│   ├── stage4_phase3_pinsoro.sh   # Phase 3 PInSoRo
-│   ├── stage3a_vlm_experiment.sh  # VLM injection experiment
-│   ├── final_retrain_pipeline.sh  # Final retrain pipeline
-│   ├── final_retrain_fulldata.sh  # Final retrain with full data
-│   ├── pipeline_11feat.sh         # Full 11-feature pipeline
-│   ├── pinsoro_specialist.sh      # PInSoRo specialist training
-│   ├── launch_v2arch_3seed.sh     # Multi-seed launcher
-│   └── ...                        # Various utility scripts
-├── manifests/                      # Per-(domain, split) JSONL manifests
-│   ├── dataset_overview.md         # Dataset documentation
-│   ├── notes_from_authors.md      # Notes from challenge authors
-│   ├── noxi_train/val/test.jsonl  # Standard train/val/test splits
-│   ├── full_*_train/val.jsonl     # Merged train+val for final retrain
-│   └── ...
-├── manifests_p8/                   # Language-split manifests (P8 experiment)
-├── data_processed/                 # Aligned per-session .npy cache (~1.2 TB, NOT included)
-├── output/                         # Training checkpoints (~13 GB, NOT included)
+├── configs/                 # model, domain, feature, instruction configs
+├── data/                    # dataset, samplers, label loading, feature builders
+├── inference/               # prompt-only TTA and full test helpers
+├── losses/                  # CCC/MSE/smoothness and ordinal contrastive losses
+├── manifests/               # split manifests and dataset documentation
+├── manifests_p8/            # language-split manifests
+├── models/                  # UniEE model, DAPA layers, prompts, heads, pooling
+├── scripts/                 # preprocessing, training, retraining, evaluation
+├── submission/              # official writer and zip validator
+├── train/                   # trainer, inference, ensemble, TTA, baselines
+├── README.md
 └── requirements.txt
 ```
 
-## Quick Start
-
-### 1. Install Dependencies
-
-```bash
-pip install -r requirements.txt
-# Optional for VLM extraction:
-# pip install decord transformers flash-attn
-```
-
-### 2. Prepare Data
-
-```bash
-# Step 1: Probe official feature dimensions (verify before trust)
-python -m data.feature_extractor.probe_official
-
-# Step 2: Align all features to 25 Hz
-python -m data.feature_extractor.align_features
-
-# Step 3: Build per-session .npy cache
-python -m data.feature_extractor.build_session_npz
-
-# Step 4: Compute normalization statistics
-python -m data.feature_extractor.compute_feature_stats
-
-# Optional: Extract Whisper features
-python -m data.feature_extractor.extract_whisper --gpus 0,1,2,3
-
-# Optional: Extract VLM embeddings (Phase 3a)
-python -m data.feature_extractor.extract_vlm_embedding --gpus 0,1
-```
-
-### 3. Train
-
-```bash
-# Phase 1: Regression pretrain on NoXi + NoXi-J
-bash scripts/stage2_phase1_v2arch.sh
-
-# Phase 2: Joint training with MPIIGI
-bash scripts/stage3_phase2_v2arch.sh
-
-# Phase 3: Full 5-domain with PInSoRo
-bash scripts/stage4_phase3_v2arch.sh
-
-# Optional: VLM experiment
-bash scripts/stage3a_vlm_experiment.sh
-```
-
-### 4. Inference & Submit
-
-```bash
-# Multi-seed ensemble inference
-python -m inference.run_test --checkpoint-dir output/ --seeds 0,1,2
-
-# Or with TTA
-python -m train.tta_inference --checkpoint output/phase3_v2arch_11feat_seed0/best.pt
-
-# Validate and create submission ZIP
-python -m submission.zip_and_check --pred-dir predictions/
-```
-
-## Known Data Issues & Workarounds
-
-| Issue | Affected | Workaround |
-|---|---|---|
-| **w2vbert2 40 Hz header bug** | NoXi, NoXi-add | SSI headers declare sr=40 but actual data is 25 Hz. `build_session_npz.py` overrides `src_fps=25`. If trusted at face value, resampling would truncate 37.5% of every session. |
-| **MPII DINO 2304-dim anomaly** | MPIIGI | DINOv2-Large ships at 2304 (3 ViT scales concatenated) vs 768 elsewhere. `align_features.py` slices first 768 columns. |
-| **XLM-R 2 Hz segment-level** | All | XLM-R outputs at 2 Hz. `align_features.py` broadcasts segment-level features to 25 Hz. |
-| **PInSoRo dual-microphone egemapsv2** | PInSoRo | Two microphones packed consecutively (2× dim). `ssi_reader.py` auto-detects and slices first microphone. |
-| **PInSoRo NaN in egemapsv2** | PInSoRo | Consistent NaN channels in egemapsv2 features. `dataset.py` replaces NaN → 0 after normalization. |
-
-## Results (Phase 2 Test Submissions)
-
-| Submission | NoXi | NoXi-add | NoXi-J | MPIIGI | PInSoRo | Avg |
-|---|---|---|---|---|---|---|
-| v2arch-3seed | 0.800 | 0.660 | 0.730 | 0.520 | 0.857 | 0.7135 |
-
-PInSoRo Kappa is the primary bottleneck for overall score improvement.
-
-## Requirements
-
-- Python ≥ 3.10
-- PyTorch ≥ 2.3 + CUDA
-- NumPy, SciPy, pandas, PyYAML, tqdm, einops, scikit-learn
-- ~170 GB disk for processed features (data_processed/)
-- ~13 GB disk for checkpoints (output/)
-- GPU: A100 80GB recommended (bf16 training)
+Large local artifacts are not tracked: `.codegraph/`, processed `.npy/.npz` caches, checkpoints, logs, and OS/editor files.
 
 ## License
 
-Research code for the MultiMediate'26 challenge. Please refer to the challenge's terms of use for data and submission guidelines.
+Research code for the MultiMediate'26 challenge. Please follow the challenge terms for dataset access, redistribution, and submission use.
