@@ -2,6 +2,25 @@
 
 **Unified Regression-Classification Engagement Estimation via Hierarchical Multimodal Fusion and Multi-Party Interaction**
 
+## Table of Contents
+
+- [Background](#background)
+- [Contributions](#contributions)
+- [Challenge Domains](#challenge-domains)
+- [Method Overview](#method-overview)
+- [Feature Set](#feature-set)
+- [Results](#results)
+- [Source Code Tutorial](#source-code-tutorial)
+  - [1. Clone and Set the Package Path](#1-clone-and-set-the-package-path)
+  - [2. Prepare Raw Data](#2-prepare-raw-data)
+  - [3. Build Per-Session Feature Caches](#3-build-per-session-feature-caches)
+  - [4. Compute Feature Statistics](#4-compute-feature-statistics)
+  - [5. Train UniEE](#5-train-uniee)
+  - [6. Run Inference](#6-run-inference)
+  - [7. Validate and Zip Submission](#7-validate-and-zip-submission)
+- [Project Layout](#project-layout)
+- [License](#license)
+
 This repository contains the source code for UniEE, our MultiMediate'26 multi-domain engagement estimation system. UniEE is designed for the new MultiMediate'26 setting where engagement estimation is no longer only continuous regression under ordinary domain shift: the benchmark also introduces heterogeneous label semantics, heterogeneous feature families, and heterogeneous interaction structures.
 
 ## Background
