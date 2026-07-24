@@ -1,18 +1,12 @@
-"""Dual-task prediction heads.
+"""Continuous and categorical engagement prediction heads.
 
 Engagement = regression on NoXi/NoXi-J/NoXi-add/MPIGI (continuous 0-1 with
 CCC metric) AND classification on PInSoRo cc/cr (task_engagement: 4
 classes, social_engagement: 5 classes, Cohen's kappa metric).
 
-DAPA paper uses MLP + Sigmoid for regression. We follow that — KAN was
-considered (USTC-IAT'25 used it for +0.025 CCC) but the user opted out for
-this iteration to simplify the parameter count and training.
-
-The bridge is OFF by default — turn it on in Phase 2 once both heads are
-trained; it lets PInSoRo's categorical supervision contribute a soft
-target to the regression head via a learnable mapping from class
-probabilities to a [0, 1] engagement scalar. Initialized so the initial
-bridge prediction = the training-data mean engagement (NoXi ≈ 0.5).
+The regression head is an MLP followed by a sigmoid. The two categorical
+heads predict PInSoRo task and social engagement. In Phase 3, the bridge
+maps their probabilities to a pseudo-continuous scalar in [0, 1].
 """
 from __future__ import annotations
 
@@ -56,8 +50,8 @@ class ClassificationHeads(nn.Module):
 class LearnableBridge(nn.Module):
     """Maps PInSoRo (task_softmax, social_softmax) → pseudo-continuous [0,1].
 
-    For Phase 2 we use it on PInSoRo batches to give the regression head a
-    second source of supervision (``bridge_ccc`` loss term against a
+    In Phase 3 it gives PInSoRo batches a pseudo-continuous supervision path
+    (the ``bridge_ccc`` loss term against a
     fixed per-class prior). Initialized so MLP output ≈ ``target_mean``
     out of the gate, preventing it from yanking the regression head off
     during the first few steps.

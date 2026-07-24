@@ -32,15 +32,15 @@ Engagement estimation predicts how engaged each participant is at every frame of
 - Interaction-structure shift: dyadic partner modeling for NoXi-style data and multi-party partner modeling for MPIIGI.
 - Label-semantics shift: CCC regression for NoXi, NoXi-Additional, NoXi-J, and MPIIGI; Cohen's Kappa classification for PInSoRo task/social engagement.
 
-UniEE addresses these shifts by keeping DAPA's reactive/anticipatory interaction backbone and extending it with regression-classification unification, hierarchical multimodal fusion, and attention-based multi-party pooling.
+UniEE addresses these shifts by adopting DAPA's reactive/anticipatory interaction backbone and adding two primary extensions: hierarchical multimodal fusion and attention-based multi-party pooling. A regression-classification bridge is included as an exploratory mechanism for heterogeneous label semantics.
 
 ## Contributions
 
-1. **Label-semantics unification.** UniEE jointly models continuous CCC domains and categorical PInSoRo domains. A Learnable Bridge maps PInSoRo task/social class probabilities into a pseudo-continuous engagement space so classification supervision can contribute to the shared representation.
+1. **Hierarchical multimodal fusion.** The final model uses an 11-feature full preset with 7,490 input dimensions. Features are organized into five semantic groups and fused by intra-group and inter-group Transformer encoders.
 
-2. **Hierarchical multimodal fusion.** The final model uses an 11-feature full preset with 7,490 input dimensions. Features are organized into five semantic groups and fused by intra-group and inter-group Transformer encoders.
+2. **Multi-party interaction modeling.** UniEE extends dyadic DAPA-style target-partner modeling to MPIIGI group discussions through learnable attention pooling over multiple partners.
 
-3. **Multi-party interaction modeling.** UniEE extends dyadic DAPA-style target-partner modeling to MPIIGI group discussions through learnable attention pooling over multiple partners.
+3. **Exploratory label-semantics bridge.** UniEE jointly models continuous CCC domains and categorical PInSoRo domains. A Learnable Bridge maps PInSoRo task/social class probabilities into a pseudo-continuous engagement space. Its independent contribution is not established by the current component ablations.
 
 ## Challenge Domains
 
@@ -134,7 +134,7 @@ Regression test CCC:
 
 | Method | NoXi | NoXi-Add | MPIIGI | NoXi-J | CCC Avg |
 |---|---:|---:|---:|---:|---:|
-| UniEE best | 0.807 | 0.759 | 0.747 | 0.636 | 0.737 |
+| UniEE + TTA | 0.807 | 0.759 | 0.747 | 0.636 | 0.737 |
 
 PInSoRo test Cohen's Kappa:
 
@@ -150,7 +150,7 @@ Component ablation on CCC domains:
 
 | Configuration | NoXi | NoXi-Add | MPIIGI | NoXi-J | CCC Avg |
 |---|---:|---:|---:|---:|---:|
-| Full UniEE | 0.807 | 0.759 | 0.747 | 0.636 | 0.737 |
+| Full UniEE (TTA) | 0.807 | 0.759 | 0.747 | 0.636 | 0.737 |
 | w/o ModalityGroupFusion | 0.794 | 0.762 | 0.643 | 0.608 | 0.702 |
 | w/o MultiPartnerPooling | 0.799 | 0.755 | 0.697 | 0.595 | 0.712 |
 
@@ -231,11 +231,11 @@ python -m multimediate26.data.feature_extractor.compute_feature_stats \
 
 The standard curriculum is:
 
-| Phase | Domains | Purpose | Script |
+| Phase | Domains | Purpose | Epochs |
 |---|---|---|---|
-| Phase 1 | NoXi + NoXi-J | regression pretraining | `scripts/stage2_phase1_v2arch.sh` |
-| Phase 2 | NoXi + NoXi-J + MPIIGI | add multi-party regression | `scripts/stage3_phase2_v2arch.sh` |
-| Phase 3 | all five domains | add PInSoRo, bridge, ordinal loss | `scripts/stage4_phase3_v2arch.sh` |
+| Phase 1 | NoXi + NoXi-J | regression pretraining | 40 |
+| Phase 2 | NoXi + NoXi-J + MPIIGI | add multi-party regression | 30 |
+| Phase 3 | all five domains | add PInSoRo, bridge, ordinal distance matching | 20 |
 
 Main training settings:
 
@@ -250,38 +250,15 @@ Main training settings:
 | Precision | bf16 |
 | Sampling | single-domain batches with sqrt-N domain weighting |
 
-Example 11-feature run:
+Run one paper seed end to end:
 
 ```bash
-FEATURES="openface2,openface3,openpose,w2vbert2,egemapsv2,whisper,xlmr,videomae,dino,swin,clip"
-NPZ_ROOT=multimediate26/data_processed/npz_v4
-FEATURE_STATS=multimediate26/experiments/_feature_stats/feature_stats_v4_whisper_full.npz
-
-# Phase 1
-EXP_NAME=phase1_11feat \
-FEATURES="$FEATURES" \
-NPZ_ROOT="$NPZ_ROOT" \
-FEATURE_STATS="$FEATURE_STATS" \
-bash multimediate26/scripts/stage2_phase1_v2arch.sh
-
-# Phase 2
-EXP_NAME=phase2_11feat \
-FEATURES="$FEATURES" \
-NPZ_ROOT="$NPZ_ROOT" \
-FEATURE_STATS="$FEATURE_STATS" \
-INIT_FROM=multimediate26/output/phase1_11feat_seed0/best.pt \
-bash multimediate26/scripts/stage3_phase2_v2arch.sh
-
-# Phase 3
-EXP_NAME=phase3_11feat \
-FEATURES="$FEATURES" \
-NPZ_ROOT="$NPZ_ROOT" \
-FEATURE_STATS="$FEATURE_STATS" \
-INIT_FROM=multimediate26/output/phase2_11feat_seed0/best.pt \
-bash multimediate26/scripts/stage4_phase3_v2arch.sh
+SEED=0 GPU=0 bash multimediate26/scripts/reproduce_paper.sh
 ```
 
-The scripts expose `SEED`, `GPU`, `EPOCHS`, `BATCH`, `WINDOW_LEN`, `TRAIN_STRIDE`, `FEATURES`, `NPZ_ROOT`, `FEATURE_STATS`, and `INIT_FROM` as environment-variable overrides.
+`SEED` controls the random state of this single-model reproduction. The phase
+scripts remain available for individual runs and expose their settings as
+environment-variable overrides.
 
 ### 6. Run Inference
 
@@ -297,7 +274,15 @@ python -m multimediate26.train.inference \
   --use-group-fusion
 ```
 
-Paper inference uses 512-frame windows, Hann-window overlap-add, regression smoothing, three-seed ensembling, TTA over LayerNorm/domain-prompt parameters, and domain-specific checkpoint selection.
+Paper regression inference uses 512-frame windows with stride 256, Hann-window overlap-add, third-order Savitzky--Golay smoothing (up to 25 frames), and TTA over LayerNorm/domain-prompt parameters. One `best.pt` checkpoint is selected by the highest mean CCC across the available labeled continuous validation domains and then used to initialize every regression test domain; no test labels or test-domain-specific checkpoint selection are used.
+
+Run paper regression TTA with the validation-selected checkpoint:
+
+```bash
+python -m multimediate26.train.tta_inference \
+  --checkpoint multimediate26/output/paper_phase3_11feat_seed0/best.pt \
+  --out-dir multimediate26/submission/paper_tta
+```
 
 ### 7. Validate and Zip Submission
 
@@ -315,13 +300,13 @@ multimediate26/
 ├── configs/                 # model, domain, feature, instruction configs
 ├── data/                    # dataset, samplers, label loading, feature builders
 ├── inference/               # prompt-only TTA and full test helpers
-├── losses/                  # CCC/MSE/smoothness and ordinal contrastive losses
+├── losses/                  # CCC/MSE/smoothness and ordinal distance matching
 ├── manifests/               # split manifests and dataset documentation
 ├── manifests_p8/            # language-split manifests
 ├── models/                  # UniEE model, DAPA layers, prompts, heads, pooling
 ├── scripts/                 # preprocessing, training, retraining, evaluation
 ├── submission/              # official writer and zip validator
-├── train/                   # trainer, inference, ensemble, TTA, baselines
+├── train/                   # trainer, inference, TTA, baselines
 ├── README.md
 └── requirements.txt
 ```

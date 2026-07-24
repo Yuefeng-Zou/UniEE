@@ -1,21 +1,17 @@
 #!/usr/bin/env bash
-# Phase 3 v2arch: 5-domain joint with PInSoRo + bridge + ordinal
-# Init from Phase 2 v2arch best.pt per seed
-#
-# Targets:
-#   maintain regression CCC + pinsoro kappa ≥ 0.30
+# UniEE Phase 3: add PInSoRo, the ordinal bridge, and distance matching.
 
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-EXP_NAME=${EXP_NAME:-phase3_v2arch_whisper}
+EXP_NAME=${EXP_NAME:-paper_phase3_11feat}
 SEED=${SEED:-0}
 GPU=${GPU:-0}
-FEATURES=${FEATURES:-"openface2,openface3,openpose,w2vbert2,egemapsv2,whisper,xlmr,swin,clip"}
-NPZ_ROOT=${NPZ_ROOT:-multimediate26/data_processed/npz_v3}
-FEATURE_STATS=${FEATURE_STATS:-experiments/_feature_stats/feature_stats_phase3_whisper.npz}
-INIT_FROM=${INIT_FROM:-multimediate26/output/phase2_v2arch_whisper_seed${SEED}/best.pt}
-EPOCHS=${EPOCHS:-30}
+FEATURES=${FEATURES:-"openface2,openface3,openpose,w2vbert2,egemapsv2,whisper,xlmr,videomae,dino,swin,clip"}
+NPZ_ROOT=${NPZ_ROOT:-multimediate26/data_processed/npz_v4}
+FEATURE_STATS=${FEATURE_STATS:-multimediate26/experiments/_feature_stats/feature_stats_v4_whisper_full.npz}
+INIT_FROM=${INIT_FROM:-multimediate26/output/paper_phase2_11feat_seed${SEED}/best.pt}
+EPOCHS=${EPOCHS:-20}
 BATCH=${BATCH:-32}
 STEPS_PER_EPOCH=${STEPS_PER_EPOCH:-400}
 WINDOW_LEN=${WINDOW_LEN:-512}
@@ -44,7 +40,6 @@ CUDA_VISIBLE_DEVICES=$GPU python -m multimediate26.train.trainer \
     --train-stride    "$TRAIN_STRIDE" \
     --max-partners    3 \
     --num-workers     "$NUM_WORKERS" \
-    --lr              2e-5 \
     --init-from       "$INIT_FROM" \
     --enable-bridge \
     --loss-weight bridge_ccc=0.3 \

@@ -1,25 +1,18 @@
-"""Trainer for MD-DAPA.
+"""Trainer for UniEE.
 
-Pipelines per DAPA-paper + USTC-IAT'25 ablation findings:
+Paper training protocol:
 
-  * Adam, lr 5e-5
-  * Linear warmup 400 steps → cosine annealing T_max=10 epochs
-  * EMA decay 0.999 over 40 epochs (DAPA paper)
+  * AdamW with module-specific learning rates
+  * 1,000-step linear warmup followed by cosine decay
+  * EMA decay 0.999
   * bf16 autocast, gradient clip 1.0
-  * 8x sliding window: window_len=512, stride=64 train; eval stride may differ
-  * batch_size 32 train / 256 val
-  * DomainBalancedBatchSampler — per-batch single domain (DAPA prompt rule)
-  * Per-domain CCC eval (NoXi, NoXi-J, MPIGI, NoXi-add); Combined = mean
-  * best.pt selected by val Combined CCC (or per_domain_mean when applicable)
-
-PInSoRo classification heads are TURNED OFF in Phase 1 (regression-only).
-Trainer.compute_loss switches per batch's domain.
+  * 512-frame windows, stride 64, batch size 32
+  * single-domain batches sampled proportional to sqrt(N_domain)
+  * validation selection by mean CCC over available continuous domains
 """
 from __future__ import annotations
 
 import argparse
-import copy
-import json
 import math
 import time
 from dataclasses import asdict
@@ -44,9 +37,10 @@ from multimediate26.data.sampler import (
 from multimediate26.losses.ccc_loss import (
     ccc, ccc_loss, mse_loss_masked, smoothness_loss,
 )
-from multimediate26.losses.ordinal_contrastive import ordinal_contrastive
+from multimediate26.losses.ordinal_distance_matching import (
+    ordinal_distance_matching_loss,
+)
 from multimediate26.models.md_dapa import MDDAPA, MDDAPAConfig
-from multimediate26.models.domain_prompt import HierarchicalDomainPrompt
 
 
 # ── EMA ──────────────────────────────────────────────────────────────────
@@ -157,7 +151,7 @@ def compute_loss(output: dict, batch: dict, weights: dict, domain: str,
     Continuous domains (noxi / noxi_j / mpiigi):
         L = w_ccc * (1 - CCC) + w_mse * MSE + w_smooth * |dy|
 
-    PInSoRo (cc / cr): NOT used in Phase 1. Phase 2:
+    PInSoRo (cc / cr), introduced in Phase 3:
         L = w_task * CE(task) + w_social * CE(social) + (optional) bridge CCC
     """
     label_mask = batch["label_mask"]                 # (B, T) bool
@@ -196,10 +190,8 @@ def compute_loss(output: dict, batch: dict, weights: dict, domain: str,
             s_target.reshape(-1), weight=social_class_weights,
             label_smoothing=0.1, ignore_index=-100,
         )
-        # Phase 3: bridge loss — supervise the regression head on PInSoRo
-        # frames using a hand-tuned pseudo-continuous target (precomputed
-        # by build_session_npz into label_pseudo_cont.npy and surfaced as
-        # batch["label_pseudo_cont"]).
+        # Phase 3: supervise the class-probability bridge on PInSoRo using
+        # the fixed pseudo-continuous target stored by build_session_npz.
         w_bridge = weights.get("bridge_ccc", 0.0)
         if w_bridge > 0 and "bridged_reg" in output and "label_pseudo_cont" in batch:
             pseudo_cont = batch["label_pseudo_cont"]            # (B, T)
@@ -211,9 +203,8 @@ def compute_loss(output: dict, batch: dict, weights: dict, domain: str,
     else:
         raise ValueError(f"unknown domain '{domain}'")
 
-    # Phase 3: ordinal contrastive — applied to ALL domains with a
-    # continuous (or pseudo-continuous) target. Pulls hidden features of
-    # frames with similar engagement together. Weight default 0.
+    # Phase 3: ordinal distance matching is applied to every domain with a
+    # continuous or pseudo-continuous target. Weight defaults to zero.
     w_ord = weights.get("ordinal", 0.0)
     if w_ord > 0 and "features" in output and label_mask.sum() >= 4:
         # Use the pseudo-cont target on PInSoRo, the true label elsewhere.
@@ -224,7 +215,7 @@ def compute_loss(output: dict, batch: dict, weights: dict, domain: str,
         else:
             ord_target = None
         if ord_target is not None:
-            loss_dict["ordinal"] = w_ord * ordinal_contrastive(
+            loss_dict["ordinal"] = w_ord * ordinal_distance_matching_loss(
                 output["features"], ord_target, label_mask,
             )
 
@@ -300,6 +291,15 @@ def _to_device(batch: dict, device: torch.device) -> dict:
         {k: v.to(device) for k, v in slot.items()}
         for slot in batch["partner_feats"]
     ]
+    if "target_modality_present" in batch:
+        out["target_modality_present"] = {
+            k: v.to(device) for k, v in batch["target_modality_present"].items()
+        }
+    if "partner_modality_present" in batch:
+        out["partner_modality_present"] = [
+            {k: v.to(device) for k, v in slot.items()}
+            for slot in batch["partner_modality_present"]
+        ]
     for k in ("label", "label_mask", "attention_mask", "label_task", "label_social",
               "label_pseudo_cont"):
         if k in batch:
@@ -480,7 +480,8 @@ def train(args) -> int:
             raise SystemExit(f"--init-from path does not exist: {args.init_from}")
         log(f"=== init from {args.init_from} (model weights only, fresh optimizer)")
         ckpt = torch.load(args.init_from, map_location=device, weights_only=False)
-        missing, unexpected = model.load_state_dict(ckpt["model"], strict=False)
+        init_state = ckpt["ema"] if "ema" in ckpt else ckpt["model"]
+        missing, unexpected = model.load_state_dict(init_state, strict=False)
         if missing:
             log(f"    missing keys ({len(missing)}): "
                 + ", ".join(missing[:5]) + (" ..." if len(missing) > 5 else ""))
@@ -610,7 +611,7 @@ def _main() -> int:
     ap.add_argument("--num-workers",    type=int, default=1)
     ap.add_argument("--lr",             type=float, default=5e-5)
     ap.add_argument("--enable-bridge",  action="store_true", default=False,
-                    help="Phase 2: enable LearnableBridge for PInSoRo → reg")
+                    help="Phase 3: enable the PInSoRo ordinal bridge")
     ap.add_argument("--use-layerwise-lr", action="store_true", default=False,
                     help="Use per-module learning rates from base.yaml lr_groups")
     ap.add_argument("--use-group-fusion", action="store_true", default=False,
@@ -626,7 +627,7 @@ def _main() -> int:
                     "ckpt['step'] position in the cosine curve. Acceptable cost given "
                     "the unplanned crash and our 40-epoch horizon.")
     ap.add_argument("--init-from",      type=Path, default=None,
-                    help="Phase 2: warm-start model weights from a Phase 1 best.pt. "
+                    help="Warm-start model weights from the preceding phase. "
                     "Loads model state_dict ONLY (no EMA/step/epoch); training restarts "
                     "at epoch 0 with a fresh optimizer and full cosine schedule. "
                     "Missing/extra keys (e.g. new domain prompts, new partner slots) "

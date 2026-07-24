@@ -117,13 +117,25 @@ class PInSoRoModel(nn.Module):
 
         self._modality_order = sorted(cfg.feature_dims.keys())
 
-    def _project(self, feats: dict[str, torch.Tensor]) -> torch.Tensor:
+    def _project(
+        self,
+        feats: dict[str, torch.Tensor],
+        modality_present: dict[str, torch.Tensor] | None = None,
+    ) -> torch.Tensor:
         parts = []
         ref = next(iter(feats.values()))
         B, T, _ = ref.shape
         for name in self._modality_order:
             if name in feats:
-                parts.append(self.projs[name](feats[name]))
+                projected = self.projs[name](feats[name])
+                if modality_present is not None and name in modality_present:
+                    projected = (
+                        projected
+                        * modality_present[name][:, None, None].to(
+                            projected.device, projected.dtype,
+                        )
+                    )
+                parts.append(projected)
             else:
                 parts.append(torch.zeros(B, T, self.cfg.hidden_dim,
                                          device=ref.device, dtype=ref.dtype))
@@ -134,15 +146,31 @@ class PInSoRoModel(nn.Module):
         return out
 
     def forward(self, batch: dict) -> dict[str, torch.Tensor]:
-        target_x = self._project(batch["target_feats"])
+        target_x = self._project(
+            batch["target_feats"],
+            batch.get("target_modality_present"),
+        )
         partners = batch["partner_feats"]
         partner_present = batch.get("partner_present", [True] * len(partners))
 
-        real = [self._project(pf) for pf, m in zip(partners, partner_present) if m]
-        if real:
-            partner_x = torch.stack(real, dim=0).sum(dim=0)
+        partner_modality_present = batch.get(
+            "partner_modality_present", [None] * len(partners),
+        )
+        projected = [
+            self._project(pf, present)
+            for pf, present in zip(partners, partner_modality_present)
+        ]
+        if isinstance(partner_present, torch.Tensor):
+            mask = partner_present.to(target_x.device, dtype=torch.bool)
         else:
-            partner_x = torch.zeros_like(target_x)
+            mask = torch.tensor(
+                partner_present, dtype=torch.bool, device=target_x.device,
+            ).unsqueeze(0).expand(target_x.shape[0], -1)
+        stacked = torch.stack(projected, dim=2)
+        partner_x = (
+            stacked
+            * mask[:, None, :, None].to(stacked.dtype)
+        ).sum(dim=2)
 
         h_t = self._encode(target_x)
         h_p = self._encode(partner_x)

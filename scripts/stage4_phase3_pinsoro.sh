@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
-# Phase 3 — 5-domain joint training with bridge + ordinal contrastive.
+# Historical Phase 3 entry point with bridge + ordinal distance matching.
 #   * Adds PInSoRo cc + cr to the train set (classification → CE + bridge)
-#   * Enables bridge_ccc loss (PInSoRo gets pseudo-cont supervision so the
-#     regression head sees gradient on classification frames too)
-#   * Enables ordinal contrastive (all 5 domains; pulls features of similar
-#     engagement frames together regardless of which domain emitted them)
+#   * Enables bridge_ccc loss against the PInSoRo pseudo-continuous target
+#   * Enables ordinal distance matching across all five domains
 #   * Initialized from Phase 2 best.pt (same seed)
 #
 # Targets:

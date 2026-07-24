@@ -1,5 +1,4 @@
-# MultiMediate'26 domain config — fine domains, coarse groups, eval metric.
-# Authoritative: ../MM26_Engagement_Estimation_TechPlan_v3.md §11.3
+# UniEE fine domains, coarse groups, label spaces, and evaluation metrics.
 
 # Coarse → fine mapping (drives hierarchical domain prompt + VLM instruction)
 coarse_groups:
@@ -13,10 +12,10 @@ label_space:
   noxi_j:      {type: continuous, range: [0, 1]}
   noxi_add:    {type: continuous, range: [0, 1]}
   mpiigi:      {type: continuous, range: [0, 1]}
-  pinsoro_cc:  {type: categorical, task_classes: 3, social_classes: 5}
-  pinsoro_cr:  {type: categorical, task_classes: 3, social_classes: 5}
+  pinsoro_cc:  {type: categorical, task_classes: 4, social_classes: 5}
+  pinsoro_cr:  {type: categorical, task_classes: 4, social_classes: 5}
 
-# Eval metric per domain (used by trainer + ensemble for selection)
+# Evaluation metric per domain (used by the trainer for checkpoint selection)
 eval_metric:
   noxi:        ccc
   noxi_j:      ccc

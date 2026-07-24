@@ -32,6 +32,8 @@ PINSORO_SOCIAL_CLASSES = ("solitary", "onlooker", "parallel",
 
 PINSORO_TASK_TO_IDX = {c: i for i, c in enumerate(PINSORO_TASK_CLASSES)}
 PINSORO_SOCIAL_TO_IDX = {c: i for i, c in enumerate(PINSORO_SOCIAL_CLASSES)}
+PINSORO_TASK_FROM_IDX = {i: c for i, c in enumerate(PINSORO_TASK_CLASSES)}
+PINSORO_SOCIAL_FROM_IDX = {i: c for i, c in enumerate(PINSORO_SOCIAL_CLASSES)}
 
 # Hand-picked priors mapping each PInSoRo class to a 0–1 engagement scalar.
 # Used by the LearnableBridge (Phase 3) to supervise a continuous-value

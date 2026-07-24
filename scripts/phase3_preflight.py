@@ -8,8 +8,7 @@ Checks (fail-fast):
   4. PInSoRo NPZ has label_task.npy + label_social.npy (CE loss needs them).
   5. Trainer module imports cleanly with bridge_ccc + ordinal weights enabled.
   6. At least 3 GPUs free (excluding GPU 2 watchdog).
-  7. multimediate26.losses.ordinal_contrastive and models.heads.LearnableBridge
-     are importable.
+  7. Ordinal distance matching and models.heads.LearnableBridge are importable.
   8. base.yaml loss_weights has bridge_ccc + ordinal keys (so CLI override works).
 """
 from __future__ import annotations
@@ -101,9 +100,11 @@ def main() -> int:
     except Exception as e:
         ok &= check("multimediate26.train.trainer", False, repr(e))
     try:
-        from multimediate26.losses.ordinal_contrastive import ordinal_contrastive
+        from multimediate26.losses.ordinal_distance_matching import (
+            ordinal_distance_matching_loss,
+        )
         from multimediate26.models.heads import LearnableBridge
-        ok &= check("ordinal_contrastive + LearnableBridge", True)
+        ok &= check("ordinal_distance_matching_loss + LearnableBridge", True)
     except Exception as e:
         ok &= check("losses+heads import", False, repr(e))
 

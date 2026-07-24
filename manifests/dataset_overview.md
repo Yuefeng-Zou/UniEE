@@ -6,7 +6,7 @@
 
 ## Session × role coverage
 
-Each `(session, role)` pair becomes one NPZ in `data_processed/npz_v3/`.
+Each `(session, role)` pair becomes one cache directory in `data_processed/npz_v4/`.
 That is the unit the training dataset iterates over.
 
 | domain        | split | sessions | (sess,role) | labeled | notes                                |

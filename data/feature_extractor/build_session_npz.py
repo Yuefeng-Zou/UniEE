@@ -251,10 +251,10 @@ def build_one(session_dir: Path, target_role: str, partner_roles: list[str],
         np.save(out_session_dir / "label_type.npy",
                 np.array("continuous", dtype=object), allow_pickle=True)
     else:
-        # PInSoRo categorical. Also write a "label" alias as 0-1 derived
-        # from task class (used by ordinal_contrastive). Trainer can ignore.
+        # PInSoRo categorical. Keep the continuous-label slot zero-filled;
+        # the pseudo-continuous target is written separately below.
         np.save(out_session_dir / "label.npy",
-                np.zeros(T, dtype=np.float32))   # filled by bridge at train time
+                np.zeros(T, dtype=np.float32))
         np.save(out_session_dir / "label_mask.npy",
                 label_bundle.label_mask.astype(bool))
         np.save(out_session_dir / "label_type.npy",
@@ -324,7 +324,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-root", type=Path, required=True)
     ap.add_argument("--out-root", type=Path, required=True,
-                    help="…/multimediate26/data_processed/npz_v3")
+                    help="e.g. multimediate26/data_processed/npz_v4")
     ap.add_argument("--feature-specs", type=Path,
                     default=Path("multimediate26/configs/feature_specs.yaml"))
     ap.add_argument("--preset", type=str, default="official_full",

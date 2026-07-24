@@ -249,26 +249,33 @@ class SessionDataset(Dataset):
 
         # Target features.
         target_feats: dict[str, np.ndarray] = {}
+        target_modality_present: dict[str, bool] = {}
         for m in self.features:
             arr = _slice_feat(f"target_{m}")
             if arr is not None:
                 target_feats[m] = arr
+                target_modality_present[m] = True
 
         # Partner features. ``partner_roles`` tells us which slots are filled.
         partner_roles = list(data.get("partner_roles", []))
         partner_feats: list[dict[str, np.ndarray]] = []
+        partner_modality_present: list[dict[str, bool]] = []
         partner_present: list[bool] = []
         for i in range(self.max_partners):
             slot: dict[str, np.ndarray] = {}
+            slot_modality_present: dict[str, bool] = {}
             present = (i < len(partner_roles) and partner_roles[i])
             for m in self.features:
                 arr = _slice_feat(f"partner{i}_{m}") if present else None
+                is_available = arr is not None
                 if arr is None and target_feats.get(m) is not None:
                     # Zero-fill so partner_proj has the same shape as target.
                     arr = np.zeros_like(target_feats[m])
                 if arr is not None:
                     slot[m] = arr
+                    slot_modality_present[m] = bool(is_available)
             partner_feats.append(slot)
+            partner_modality_present.append(slot_modality_present)
             partner_present.append(bool(present))
 
         # Label (always exists; zero where mask is False).
@@ -282,6 +289,8 @@ class SessionDataset(Dataset):
         out_dict: dict = {
             "target_feats":     {m: torch.from_numpy(v) for m, v in target_feats.items()},
             "partner_feats":    [{m: torch.from_numpy(v) for m, v in slot.items()} for slot in partner_feats],
+            "target_modality_present": target_modality_present,
+            "partner_modality_present": partner_modality_present,
             "partner_present":  partner_present,
             "label":            torch.from_numpy(label),
             "label_mask":       torch.from_numpy(label_mask),
@@ -310,7 +319,7 @@ def collate(batch: list[dict]) -> dict:
     """Stack tensors along batch dim; keep metadata as lists.
 
     IMPORTANT: every item in `batch` must share the same ``domain`` (the
-    DomainPromptPool selects exactly one prompt per forward). The
+    hierarchical prompt module selects exactly one prompt per forward). The
     DomainBalancedBatchSampler enforces this; the default RandomSampler
     breaks it. Always pair this dataset with our sampler.
     """
@@ -320,34 +329,66 @@ def collate(batch: list[dict]) -> dict:
     out["label_mask"]     = torch.stack([b["label_mask"]     for b in batch])
     out["attention_mask"] = torch.stack([b["attention_mask"] for b in batch])
 
-    # Per-modality stacking. Use intersection of modalities across batch
-    # (handles sessions missing optional features like qwen3vl_emb).
-    modalities = set(batch[0]["target_feats"].keys())
-    for b in batch[1:]:
-        modalities &= set(b["target_feats"].keys())
+    # Per-modality stacking. Use the union and zero-fill per sample so a
+    # missing stream in one session does not remove that stream from all
+    # other sessions in the batch.
+    modalities: set[str] = set()
+    for b in batch:
+        modalities |= set(b["target_feats"].keys())
     modalities = sorted(modalities)
-    out["target_feats"] = {
-        m: torch.stack([b["target_feats"][m] for b in batch])
-        for m in modalities
-    }
+    out["target_feats"] = {}
+    out["target_modality_present"] = {}
+    for m in modalities:
+        ref = next(b["target_feats"][m] for b in batch if m in b["target_feats"])
+        out["target_feats"][m] = torch.stack([
+            b["target_feats"].get(m, torch.zeros_like(ref)) for b in batch
+        ])
+        out["target_modality_present"][m] = torch.tensor(
+            [
+                b.get("target_modality_present", {}).get(
+                    m, m in b["target_feats"],
+                )
+                for b in batch
+            ],
+            dtype=torch.bool,
+        )
+
     # Partners: stack per slot per modality.
     max_p = len(batch[0]["partner_feats"])
     out["partner_feats"] = []
+    out["partner_modality_present"] = []
     for i in range(max_p):
-        slot_mods = set(batch[0]["partner_feats"][i].keys())
-        for b in batch[1:]:
-            slot_mods &= set(b["partner_feats"][i].keys())
+        slot_mods: set[str] = set()
+        for b in batch:
+            slot_mods |= set(b["partner_feats"][i].keys())
         slot_mods = sorted(slot_mods)
-        out["partner_feats"].append({
-            m: torch.stack([b["partner_feats"][i][m] for b in batch])
-            for m in slot_mods
-        })
-    # partner_present: collapse to per-slot bool (all items in batch should agree
-    # by virtue of same-domain batches, but be defensive).
-    out["partner_present"] = [
-        bool(all(b["partner_present"][i] for b in batch))
-        for i in range(max_p)
-    ]
+        slot_out = {}
+        slot_present = {}
+        for m in slot_mods:
+            ref = next(
+                b["partner_feats"][i][m]
+                for b in batch if m in b["partner_feats"][i]
+            )
+            slot_out[m] = torch.stack([
+                b["partner_feats"][i].get(m, torch.zeros_like(ref))
+                for b in batch
+            ])
+            slot_present[m] = torch.tensor(
+                [
+                    b.get("partner_modality_present", [{}] * max_p)[i].get(
+                        m, m in b["partner_feats"][i],
+                    )
+                    for b in batch
+                ],
+                dtype=torch.bool,
+            )
+        out["partner_feats"].append(slot_out)
+        out["partner_modality_present"].append(slot_present)
+
+    # Preserve partner availability per sample: (B, N_partner).
+    out["partner_present"] = torch.tensor(
+        [b["partner_present"] for b in batch], dtype=torch.bool,
+    )
 
     # Domain — assert consistency.
     domains = {b["domain"] for b in batch}

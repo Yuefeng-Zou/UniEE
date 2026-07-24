@@ -22,11 +22,17 @@ import torch.nn.functional as F
 from sklearn.metrics import cohen_kappa_score
 from sklearn.preprocessing import MinMaxScaler
 
+from multimediate26.data.label_loader import (
+    PINSORO_SOCIAL_FROM_IDX,
+    PINSORO_SOCIAL_TO_IDX,
+    PINSORO_TASK_FROM_IDX,
+    PINSORO_TASK_TO_IDX,
+)
 
-TASK_MAP = {"goaloriented": 0, "aimless": 1, "adultseeking": 2, "noplay": 3}
-SOCIAL_MAP = {"solitary": 0, "onlooker": 1, "parallel": 2, "associative": 3, "cooperative": 4}
-TASK_INV = {v: k for k, v in TASK_MAP.items()}
-SOCIAL_INV = {v: k for k, v in SOCIAL_MAP.items()}
+TASK_MAP = PINSORO_TASK_TO_IDX
+SOCIAL_MAP = PINSORO_SOCIAL_TO_IDX
+TASK_INV = PINSORO_TASK_FROM_IDX
+SOCIAL_INV = PINSORO_SOCIAL_FROM_IDX
 
 
 class FocalLoss(nn.Module):
@@ -297,9 +303,9 @@ def main():
             task_labels = [TASK_INV.get(int(c), "noplay") for c in task_pred]
             social_labels = [SOCIAL_INV.get(int(c), "solitary") for c in social_pred]
 
-            with open(out_dir / f"{sess['target_role']}.task_engagement.prediction.csv", "w") as f:
+            with open(out_dir / f"{sess['target_role']}.task_engagement.engagement.prediction.csv", "w") as f:
                 f.write("\n".join(task_labels) + "\n")
-            with open(out_dir / f"{sess['target_role']}.social_engagement.prediction.csv", "w") as f:
+            with open(out_dir / f"{sess['target_role']}.social_engagement.engagement.prediction.csv", "w") as f:
                 f.write("\n".join(social_labels) + "\n")
 
         n_files = sum(1 for _ in (args.output_dir / "predictions").rglob("*.csv"))

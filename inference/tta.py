@@ -1,4 +1,4 @@
-"""Test-Time Adaptation: per-session prompt tuning.
+"""Experimental classification TTA; not used for the paper results.
 
 Freeze the entire model and only optimize the 8-token domain prompt for each
 test session using self-supervised losses (temporal smoothness + entropy
@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import tempfile
 import time
 from pathlib import Path
@@ -52,17 +51,19 @@ def _to_device(batch, device):
 
 
 def _find_prompt_params(model, domain: str) -> list[torch.nn.Parameter]:
-    """Find prompt parameters for the given domain (with fallback)."""
+    """Find the active coarse and fine prompt parameters for one domain."""
+    from multimediate26.models.domain_prompt import HierarchicalDomainPrompt
+
+    coarse = HierarchicalDomainPrompt.COARSE_GROUPS.get(domain)
+    fine = HierarchicalDomainPrompt.DEFAULT_FALLBACKS.get(domain, domain)
+    wanted = (
+        f"domain_prompt.coarse_prompts.{coarse}",
+        f"domain_prompt.fine_prompts.{fine}",
+    )
     params = []
     for name, p in model.named_parameters():
-        if "domain_prompt" in name and domain in name:
+        if any(name.startswith(prefix) for prefix in wanted):
             params.append(p)
-    if not params:
-        from multimediate26.models.md_dapa import DomainPromptPool
-        fb = DomainPromptPool.DEFAULT_FALLBACKS.get(domain, domain)
-        for name, p in model.named_parameters():
-            if "domain_prompt" in name and fb in name:
-                params.append(p)
     return params
 
 
@@ -83,7 +84,7 @@ def tta_adapt(model, loader, prompt_params, device, steps: int, lr: float):
         p.requires_grad_(True)
 
     optimizer = torch.optim.Adam(prompt_params, lr=lr)
-    model.train()
+    model.eval()
 
     batch_iter = iter(loader)
     for _ in range(steps):
@@ -94,10 +95,14 @@ def tta_adapt(model, loader, prompt_params, device, steps: int, lr: float):
             batch = next(batch_iter)
         batch = _to_device(batch, device)
         optimizer.zero_grad(set_to_none=True)
-        with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
+        with torch.amp.autocast(
+            device_type=device.type,
+            dtype=torch.bfloat16,
+            enabled=device.type == "cuda",
+        ):
             out = model(batch)
             reg = out["reg"]
-            mask = batch["label_mask"]
+            mask = batch["attention_mask"]
             loss = smoothness_loss(reg, mask)
             if "task_logits" in out:
                 for key in ("task_logits", "social_logits"):
@@ -127,7 +132,7 @@ def main():
     ap.add_argument("--feature-stats", type=Path, required=True)
     ap.add_argument("--manifest", type=Path, required=True)
     ap.add_argument("--npz-root", type=Path,
-                    default=Path("multimediate26/data_processed/npz_v3"))
+                    default=Path("multimediate26/data_processed/npz_v4"))
     ap.add_argument("--base-config", type=Path,
                     default=Path("multimediate26/configs/base.yaml"))
     ap.add_argument("--feature-specs", type=Path,

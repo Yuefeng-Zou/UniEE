@@ -1,23 +1,15 @@
 #!/usr/bin/env bash
-# Phase 1 v2arch: NoXi + NoXi-J regression pre-train with:
-#   - ModalityGroupFusion (replaces concat+Linear)
-#   - HierarchicalDomainPrompt (coarse+fine)
-#   - MultiPartnerPooling (attention-based, though 1 partner in Phase 1)
-#   - Layer-wise LR from base.yaml lr_groups
-#
-# Targets:
-#   noxi_val    CCC ≥ 0.855
-#   noxi_j_val  CCC ≥ 0.680
+# UniEE Phase 1: NoXi + NoXi-J continuous-engagement pretraining.
 
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-EXP_NAME=${EXP_NAME:-phase1_v2arch_whisper}
+EXP_NAME=${EXP_NAME:-paper_phase1_11feat}
 SEED=${SEED:-0}
 GPU=${GPU:-0}
-FEATURES=${FEATURES:-"openface2,openface3,openpose,w2vbert2,egemapsv2,whisper,xlmr,swin,clip"}
-NPZ_ROOT=${NPZ_ROOT:-multimediate26/data_processed/npz_v3}
-FEATURE_STATS=${FEATURE_STATS:-experiments/_feature_stats/feature_stats_phase1_whisper.npz}
+FEATURES=${FEATURES:-"openface2,openface3,openpose,w2vbert2,egemapsv2,whisper,xlmr,videomae,dino,swin,clip"}
+NPZ_ROOT=${NPZ_ROOT:-multimediate26/data_processed/npz_v4}
+FEATURE_STATS=${FEATURE_STATS:-multimediate26/experiments/_feature_stats/feature_stats_v4_whisper_full.npz}
 EPOCHS=${EPOCHS:-40}
 BATCH=${BATCH:-32}
 STEPS_PER_EPOCH=${STEPS_PER_EPOCH:-300}

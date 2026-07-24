@@ -158,8 +158,7 @@ def main():
     print("- ep = epoch at which best `combined_ccc` was reached.")
     print("- DAPA / USTC are val numbers (compare directly to our runs above).")
     print("- MM26 baseline is **test** (lower bound; expect ours val > baseline test).")
-    print("- mpiigi is evaluated on the 7-row val_held subset during training; "
-          "use scripts/eval_full_val.py on the full 21-row val for a paper-comparable number.")
+    print("- mpiigi is evaluated on the configured held-out validation subset during training.")
 
 
 if __name__ == "__main__":

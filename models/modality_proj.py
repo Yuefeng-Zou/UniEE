@@ -1,11 +1,9 @@
-"""ModalityProjector — per-feature linear projection to a shared hidden dim.
+"""Per-feature projection and hierarchical semantic-group fusion.
 
-For each feature ``f`` of native dim ``D_f`` we learn a separate projection
-``Linear(D_f → D)`` followed by LayerNorm + GELU + Dropout. The output is a
-single tensor of shape ``(B, T, D)`` formed by *concatenating along the
-channel axis* the projected modalities. This is the DAPA recipe ("each
-modality projected then concatenated into a frame-level sequence X ∈
-R^{N x D_in}", DAPA §3.3.1) — much simpler than v3-plan's 6-group fusion.
+Each feature ``f`` has an independent ``Linear(D_f -> D)`` projection followed
+by LayerNorm, GELU, and dropout. ``ModalityGroupFusion`` first attends across
+features inside each semantic group and then across the resulting group
+representations.
 
 Two practical notes:
 
@@ -55,7 +53,7 @@ class ModalityProjector(nn.Module):
 
 
 class ModalityGroupFusion(nn.Module):
-    """Two-level modality fusion (v3 §4.2).
+    """Two-level modality fusion used by UniEE.
 
     Intra-group: per-group TransformerEncoder fuses modalities within the same
     semantic group (e.g. the three audio features attend to each other).

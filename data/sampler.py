@@ -1,12 +1,11 @@
-"""Domain-balanced batch sampler.
+"""Domain-balanced single-domain batch sampler.
 
-Two hard constraints from MD-DAPA:
+Two constraints used by UniEE:
   1. Every batch must contain windows from a **single domain** — the
-     DomainPromptPool selects exactly one prompt per forward pass, and the
+     hierarchical prompt module selects one prompt per forward pass, and the
      collate function asserts this.
   2. Across an epoch, domains should be sampled with sqrt(N_windows)
-     frequency so the rare ones (mpii: 6 sessions) don't get drowned out
-     by the populous ones (noxi: 76 (sess,role) → many more windows).
+     frequency so smaller domains are not overwhelmed by larger ones.
 
 This sampler yields lists of indices, where each list is one batch worth
 of indices all drawn from the same domain. Designed to be passed as
@@ -14,7 +13,7 @@ of indices all drawn from the same domain. Designed to be passed as
 
 Eval mode uses a *deterministic* per-domain pass — emits every window in
 manifest order, batched by domain. This keeps overlap-add reconstruction
-in eval/ensemble code simple.
+in evaluation code simple.
 """
 from __future__ import annotations
 

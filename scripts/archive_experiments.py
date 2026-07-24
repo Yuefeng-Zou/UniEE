@@ -133,11 +133,10 @@ def main():
             print(f"  ✓ {exp:<50s} best={best}  ep={ep}  params={params}")
             all_summaries.append(s)
 
-    # Also archive eval_full_val and TTA logs
+    # Also archive evaluation and TTA logs.
     misc_dir = ARCHIVE_ROOT / "_eval_logs"
     misc_dir.mkdir(parents=True, exist_ok=True)
     for log_name in [
-        "eval_full_val_phase3.log",
         "sota_comparison.txt",
         "tta_noxi_val.log",
         "tta_noxi_j_val.log",

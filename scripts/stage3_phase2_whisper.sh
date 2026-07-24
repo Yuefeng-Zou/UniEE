@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Phase 2 joint training (whisper edition):
 #   * NoXi + NoXi-J + MPIIGI continuous-only
-#   * Initialized from Phase 1 whisper best.pt (3 seeds × seed-matched init)
+#   * Initialized from a Phase 1 Whisper best.pt checkpoint
 #   * 9-feat preset (8 from Phase 1 + whisper) — same as Phase 1
 #   * max_partners=3 (MPIIGI 4-person sessions)
 #

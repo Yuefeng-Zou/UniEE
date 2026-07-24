@@ -30,12 +30,15 @@ import torch
 import yaml
 from scipy.signal import savgol_filter
 
-from multimediate26.data.dataset import SessionDataset, collate
+from multimediate26.data.label_loader import (
+    PINSORO_SOCIAL_FROM_IDX,
+    PINSORO_TASK_FROM_IDX,
+)
 from multimediate26.models.md_dapa import MDDAPA, MDDAPAConfig
 
 
-TASK_INV_MAP = {0: "goaloriented", 1: "aimless", 2: "adultseeking", 3: "noplay"}
-SOCIAL_INV_MAP = {0: "solitary", 1: "onlooker", 2: "parallel", 3: "associative", 4: "cooperative"}
+TASK_INV_MAP = PINSORO_TASK_FROM_IDX
+SOCIAL_INV_MAP = PINSORO_SOCIAL_FROM_IDX
 
 DOMAIN_TEST_MANIFESTS = {
     "noxi":       "multimediate26/manifests/noxi_test.jsonl",
@@ -55,7 +58,12 @@ DOMAIN_TO_SUBMISSION_DIR = {
     "pinsoro_cr": "pinsoro-cr",
 }
 
-DOMAIN_FALLBACKS = {"noxi_add": "noxi"}
+def hann_weight(length: int) -> np.ndarray:
+    """Hann weights with nonzero endpoints for stable overlap-add."""
+    if length < 2:
+        return np.ones(length, dtype=np.float32)
+    n = np.arange(length, dtype=np.float32)
+    return 0.5 * (1.0 - np.cos(2.0 * np.pi * (n + 1) / (length + 1)))
 
 
 def load_model(ckpt_path: Path, device: torch.device,
@@ -109,8 +117,6 @@ def predict_session(model: MDDAPA, session_dir: Path, features: list[str],
                     ) -> dict[str, np.ndarray]:
     """Run sliding-window inference on one session, return full-length predictions."""
 
-    from multimediate26.data.dataset import SessionDataset
-
     T_path = session_dir / "T.npy"
     T = int(np.load(T_path)) if T_path.exists() else None
 
@@ -163,7 +169,7 @@ def predict_session(model: MDDAPA, session_dir: Path, features: list[str],
                 std = stats[f"{fname}_std"]
                 std = np.where(std < 1e-8, 1.0, std)
                 arr = (arr - mean) / std
-                arr = np.clip(arr, -10, 10)
+                arr = np.clip(arr, -5, 5)
             out[fname] = arr
         return out
 
@@ -176,8 +182,6 @@ def predict_session(model: MDDAPA, session_dir: Path, features: list[str],
     task_acc = np.zeros((T, 4), dtype=np.float64)
     social_acc = np.zeros((T, 5), dtype=np.float64)
     cls_cnt = np.zeros(T, dtype=np.float64)
-    hann = np.hanning(window_len)
-
     for start in range(0, T, stride):
         end = min(start + window_len, T)
         wl = end - start
@@ -189,29 +193,32 @@ def predict_session(model: MDDAPA, session_dir: Path, features: list[str],
         ]
         mask = torch.ones(1, wl, dtype=torch.bool, device=device)
 
-        fallback = DOMAIN_FALLBACKS.get(domain)
         batch = {
             "target_feats": chunk_t,
             "partner_feats": chunk_ps,
             "partner_present": partner_present,
             "attention_mask": mask,
-            "domain": domain if domain != "noxi_add" else "noxi_add",
+            "domain": domain,
         }
 
-        with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
+        with torch.amp.autocast(
+            device_type=device.type,
+            dtype=torch.bfloat16,
+            enabled=device.type == "cuda",
+        ):
             out = model(batch)
 
-        w = hann[:wl] if wl == window_len else np.hanning(wl)
+        w = hann_weight(wl)
 
         pred_reg = out["reg"].squeeze(0).cpu().float().numpy()
         reg_acc[start:end] += pred_reg * w
         reg_cnt[start:end] += w
 
         if "task_logits" in out:
-            task_probs = out["task_logits"].squeeze(0).cpu().float().numpy()
-            social_probs = out["social_logits"].squeeze(0).cpu().float().numpy()
-            task_acc[start:end] += task_probs * w[:, None]
-            social_acc[start:end] += social_probs * w[:, None]
+            task_logits = out["task_logits"].squeeze(0).cpu().float().numpy()
+            social_logits = out["social_logits"].squeeze(0).cpu().float().numpy()
+            task_acc[start:end] += task_logits * w[:, None]
+            social_acc[start:end] += social_logits * w[:, None]
             cls_cnt[start:end] += w
 
     reg_pred = reg_acc / np.maximum(reg_cnt, 1e-8)
@@ -249,8 +256,8 @@ def write_classification_csv(out_dir: Path, session_id: str, role: str,
     task_labels = [TASK_INV_MAP.get(int(c), "noplay") for c in task_classes]
     social_labels = [SOCIAL_INV_MAP.get(int(c), "solitary") for c in social_classes]
 
-    task_path = sess_dir / f"{role}.task_engagement.prediction.csv"
-    social_path = sess_dir / f"{role}.social_engagement.prediction.csv"
+    task_path = sess_dir / f"{role}.task_engagement.engagement.prediction.csv"
+    social_path = sess_dir / f"{role}.social_engagement.engagement.prediction.csv"
 
     with open(task_path, "w") as f:
         f.write("\n".join(task_labels) + "\n")
@@ -268,11 +275,22 @@ def main():
     ap.add_argument("--feature-specs", type=Path, default=Path("multimediate26/configs/feature_specs.yaml"))
     ap.add_argument("--features", type=str,
                     default="openface2,openface3,openpose,w2vbert2,egemapsv2,whisper,xlmr,videomae,dino,swin,clip")
-    ap.add_argument("--feature-stats", type=Path, default=None)
+    ap.add_argument(
+        "--feature-stats",
+        type=Path,
+        default=Path(
+            "multimediate26/experiments/_feature_stats/"
+            "feature_stats_v4_whisper_full.npz"
+        ),
+    )
     ap.add_argument("--npz-root", type=Path, default=Path("multimediate26/data_processed/npz_v4"))
     ap.add_argument("--window-len", type=int, default=512)
     ap.add_argument("--max-partners", type=int, default=3)
-    ap.add_argument("--use-group-fusion", action="store_true", default=False)
+    ap.add_argument(
+        "--use-group-fusion",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     ap.add_argument("--use-flat-prompt", action="store_true", default=False)
     ap.add_argument("--use-sum-partner", action="store_true", default=False)
     ap.add_argument("--domains", type=str, default="noxi,noxi_add,noxi_j,mpiigi,pinsoro_cc,pinsoro_cr")

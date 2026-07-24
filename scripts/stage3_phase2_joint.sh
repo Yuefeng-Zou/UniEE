@@ -2,7 +2,7 @@
 # Phase 2 joint training: NoXi + NoXi-J + MPIIGI continuous-only.
 # Per TechPlan v3 §6.2 — adds the MPIIGI val sessions (as quasi-train) so the
 # 3-of-4 leaderboard regression domains all receive direct supervision. PInSoRo
-# is held for Phase 3 (needs bridge + ordinal contrastive).
+# is held for Phase 3 (bridge + ordinal distance matching).
 #
 # Targets (must beat last year's SOTA):
 #   noxi      val CCC ≥ 0.855  (DAPA 2025)

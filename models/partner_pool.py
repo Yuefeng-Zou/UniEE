@@ -1,4 +1,4 @@
-"""Attention-based multi-partner pooling (v3 §4.5).
+"""Attention-based multi-partner pooling.
 
 For single-partner sessions (NoXi, NoXi-J) this is a pass-through.
 For multi-partner sessions (MPIIGI 3-4 person) a learnable query attends
@@ -21,30 +21,60 @@ class MultiPartnerPooling(nn.Module):
             hidden_dim, n_heads, batch_first=True,
         )
 
-    def forward(self, partners: list[torch.Tensor],
-                partner_mask: list[bool] | None = None) -> torch.Tensor:
+    def forward(
+        self,
+        partners: list[torch.Tensor],
+        partner_mask: list[bool] | torch.Tensor | None = None,
+    ) -> torch.Tensor:
         """partners: list of (B, T, D), one per partner slot.
 
-        partner_mask: optional list of bool — True for real partner.
+        partner_mask: optional (B, N) mask or a legacy list of slot booleans.
         """
         if not partners:
             raise ValueError("at least 1 partner expected")
+        partners = partners[:self.max_partners]
+        B, T, D = partners[0].shape
+        n_partners = len(partners)
+
         if partner_mask is None:
-            partner_mask = [True] * len(partners)
+            mask = torch.ones(
+                B, n_partners, dtype=torch.bool, device=partners[0].device,
+            )
+        elif isinstance(partner_mask, torch.Tensor):
+            mask = partner_mask[:, :n_partners].to(
+                device=partners[0].device, dtype=torch.bool,
+            )
+        else:
+            mask = torch.tensor(
+                partner_mask[:n_partners],
+                dtype=torch.bool,
+                device=partners[0].device,
+            ).unsqueeze(0).expand(B, -1)
 
-        real = [p for p, m in zip(partners, partner_mask) if m]
-        if not real:
-            return torch.zeros_like(partners[0])
-        if len(real) == 1:
-            return real[0]
+        if mask.shape != (B, n_partners):
+            raise ValueError(
+                f"partner_mask must have shape {(B, n_partners)}, got {tuple(mask.shape)}"
+            )
+        if n_partners == 1:
+            return partners[0] * mask[:, :1, None].to(partners[0].dtype)
 
-        if len(real) > self.max_partners:
-            idx = torch.randperm(len(real))[:self.max_partners]
-            real = [real[i] for i in idx]
-
-        B, T, D = real[0].shape
-        stacked = torch.stack(real, dim=2)          # (B, T, N, D)
-        reshaped = stacked.reshape(B * T, len(real), D)
+        stacked = torch.stack(partners, dim=2)      # (B, T, N, D)
+        reshaped = stacked.reshape(B * T, n_partners, D)
         query = self.query.expand(B * T, -1, -1)    # (B*T, 1, D)
-        pooled, _ = self.attn(query, reshaped, reshaped)
-        return pooled.squeeze(1).reshape(B, T, D)
+
+        # MultiheadAttention cannot accept rows where every key is masked.
+        # Temporarily expose a zero-filled slot, then zero the pooled result.
+        has_partner = mask.any(dim=1)
+        safe_mask = mask.clone()
+        safe_mask[~has_partner, 0] = True
+        frame_mask = safe_mask[:, None, :].expand(B, T, n_partners)
+        key_padding_mask = ~frame_mask.reshape(B * T, n_partners)
+
+        pooled, _ = self.attn(
+            query,
+            reshaped,
+            reshaped,
+            key_padding_mask=key_padding_mask,
+        )
+        pooled = pooled.squeeze(1).reshape(B, T, D)
+        return pooled * has_partner[:, None, None].to(pooled.dtype)

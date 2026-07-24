@@ -10,7 +10,7 @@ SEED=${SEED:-2}
 GPU=${GPU:-0}
 FEATURES="openface2,openface3,openpose,w2vbert2,egemapsv2,whisper,xlmr,videomae,dino,swin,clip"
 NPZ_ROOT=multimediate26/data_processed/npz_v4
-FEATURE_STATS=experiments/_feature_stats/feature_stats_v4_whisper_full.npz
+FEATURE_STATS=multimediate26/experiments/_feature_stats/feature_stats_v4_whisper_full.npz
 PREFIX=final_fulldata
 
 # All data manifests (train+val merged, no held-out)

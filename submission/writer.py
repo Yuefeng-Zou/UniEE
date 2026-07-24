@@ -28,6 +28,11 @@ from pathlib import Path
 
 import numpy as np
 
+from ..data.label_loader import (
+    PINSORO_SOCIAL_FROM_IDX,
+    PINSORO_TASK_FROM_IDX,
+)
+
 
 # Domain name → official submission folder
 DOMAIN_TO_FOLDER = {
@@ -39,11 +44,9 @@ DOMAIN_TO_FOLDER = {
     "pinsoro_cr": "pinsoro-cr",
 }
 
-# Official PInSoRo class inverse maps — must match dataset-config.json
-PINSORO_TASK_INV = {0: "goaloriented", 1: "aimless", 2: "adultseeking", 3: "noplay"}
-PINSORO_SOCIAL_INV = {
-    0: "solitary", 1: "onlooker", 2: "parallel", 3: "associative", 4: "cooperative",
-}
+# Backward-compatible exports used by the submission checker.
+PINSORO_TASK_INV = PINSORO_TASK_FROM_IDX
+PINSORO_SOCIAL_INV = PINSORO_SOCIAL_FROM_IDX
 
 
 def submission_root(out_dir: str | Path, domain: str) -> Path:

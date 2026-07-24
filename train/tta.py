@@ -1,8 +1,8 @@
-"""Test-Time Adaptation (v3 §8).
+"""Reusable regression test-time adaptation.
 
-Adapts only LayerNorm + domain prompt parameters per test domain:
-  - Regression: input perturbation consistency + smoothness
-  - Classification: entropy minimization
+The paper protocol adapts LayerNorm affine parameters and hierarchical domain
+prompts with input-noise consistency and temporal smoothness. Categorical
+entropy minimization is intentionally not part of this class.
 """
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 
@@ -20,43 +19,53 @@ class TestTimeAdapter:
         self.model = model
         self.original_state = copy.deepcopy(model.state_dict())
 
-        for name, p in model.named_parameters():
-            p.requires_grad = (
-                "LayerNorm" in name or "layer_norm" in name
-                or "norm" in name or "domain_prompt" in name
-            )
-
-        trainable = [p for p in model.parameters() if p.requires_grad]
-        self.optimizer = torch.optim.AdamW(trainable, lr=lr)
+        for param in model.parameters():
+            param.requires_grad = False
+        trainable = []
+        selected_ids = set()
+        for module in model.modules():
+            if isinstance(module, nn.LayerNorm):
+                for param in module.parameters(recurse=False):
+                    param.requires_grad = True
+                    if id(param) not in selected_ids:
+                        trainable.append(param)
+                        selected_ids.add(id(param))
+        for name, param in model.named_parameters():
+            if name.startswith("domain_prompt."):
+                param.requires_grad = True
+                if id(param) not in selected_ids:
+                    trainable.append(param)
+                    selected_ids.add(id(param))
+        self.optimizer = torch.optim.AdamW(trainable, lr=lr, weight_decay=0.0)
 
     def adapt(self, loader: DataLoader, device: torch.device,
               n_epochs: int = 3, noise_std: float = 0.01) -> None:
-        self.model.train()
+        self.model.eval()
         for _ in range(n_epochs):
             for batch in loader:
                 batch = _to_device(batch, device)
                 self.optimizer.zero_grad(set_to_none=True)
 
-                domain = batch["domain"]
-                if domain in ("pinsoro_cc", "pinsoro_cr"):
-                    output = self.model(batch)
-                    if "task_logits" not in output:
-                        continue
-                    p_t = output["task_logits"].softmax(-1)
-                    p_s = output["social_logits"].softmax(-1)
-                    ent_t = -(p_t * (p_t + 1e-8).log()).sum(-1).mean()
-                    ent_s = -(p_s * (p_s + 1e-8).log()).sum(-1).mean()
-                    loss = ent_t + ent_s
-                else:
+                with torch.amp.autocast(
+                    device_type=device.type,
+                    dtype=torch.bfloat16,
+                    enabled=device.type == "cuda",
+                ):
                     output = self.model(batch)
                     noisy_batch = _add_noise(batch, noise_std)
                     output_noisy = self.model(noisy_batch)
+                    valid = batch["attention_mask"]
                     consistency = (
-                        output["reg"] - output_noisy["reg"]
-                    ).pow(2).mean()
+                        (output["reg"] - output_noisy["reg"]).pow(2)
+                        * valid.to(output["reg"].dtype)
+                    ).sum() / valid.sum().clamp_min(1)
+                    pair_valid = valid[:, 1:] & valid[:, :-1]
                     smoothness = (
                         output["reg"][:, 1:] - output["reg"][:, :-1]
-                    ).abs().mean()
+                    ).abs()
+                    smoothness = (
+                        smoothness * pair_valid.to(smoothness.dtype)
+                    ).sum() / pair_valid.sum().clamp_min(1)
                     loss = consistency + 0.05 * smoothness
 
                 loss.backward()
@@ -88,6 +97,15 @@ def _to_device(batch: dict, device: torch.device) -> dict:
         {k: v.to(device) for k, v in slot.items()}
         for slot in batch["partner_feats"]
     ]
+    if "target_modality_present" in batch:
+        out["target_modality_present"] = {
+            k: v.to(device) for k, v in batch["target_modality_present"].items()
+        }
+    if "partner_modality_present" in batch:
+        out["partner_modality_present"] = [
+            {k: v.to(device) for k, v in slot.items()}
+            for slot in batch["partner_modality_present"]
+        ]
     for k in ("label", "label_mask", "attention_mask", "label_task", "label_social",
               "label_pseudo_cont"):
         if k in batch:

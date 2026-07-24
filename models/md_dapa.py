@@ -1,13 +1,7 @@
-"""MD-DAPA v2 — Multi-Domain Domain-Adaptive Parallel Attention.
-
-v2 architecture upgrades over v1:
-  - ModalityGroupFusion replaces concat+Linear down-projection
-  - HierarchicalDomainPrompt replaces flat DomainPromptPool
-  - MultiPartnerPooling replaces parameter-free sum
-"""
+"""UniEE model: hierarchical multimodal and multi-party engagement modeling."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
@@ -129,32 +123,59 @@ class MDDAPA(nn.Module):
 
         self._modality_order = list(cfg.feature_dims.keys())
 
-    def _project_one_role(self, feats: dict[str, torch.Tensor]) -> torch.Tensor:
+    def _project_one_role(
+        self,
+        feats: dict[str, torch.Tensor],
+        modality_present: dict[str, torch.Tensor] | None = None,
+    ) -> torch.Tensor:
         if not feats:
             raise ValueError("at least one modality must be provided.")
 
         projected = self.projector(feats)
+        if not projected:
+            raise ValueError("none of the provided modalities are configured.")
+        if modality_present is not None:
+            for name, present in modality_present.items():
+                if name in projected:
+                    projected[name] = (
+                        projected[name]
+                        * present[:, None, None].to(
+                            device=projected[name].device,
+                            dtype=projected[name].dtype,
+                        )
+                    )
+
+        # Preserve a fixed 11-feature structure when a dataset lacks a stream.
+        # Zero replacement happens after projection so all modality tokens share
+        # the same hidden dimension before hierarchical group fusion.
+        ref = next(iter(projected.values()))
+        B, T, H = ref.shape
+        for name in self._modality_order:
+            if name not in projected:
+                projected[name] = ref.new_zeros(B, T, H)
 
         if self._use_group_fusion:
             return self.group_fusion(projected)
         else:
-            ref = next(iter(feats.values()))
-            B, T, _ = ref.shape
-            H = self.cfg.hidden_dim
-            device, dtype = ref.device, ref.dtype
-            parts: list[torch.Tensor] = []
-            for name in self._modality_order:
-                if name in projected:
-                    parts.append(projected[name])
-                else:
-                    parts.append(torch.zeros(B, T, H, device=device, dtype=dtype))
+            parts = [projected[name] for name in self._modality_order]
             concat = torch.cat(parts, dim=-1)
             return self.down_proj(concat)
 
     def forward(self, batch: dict) -> dict[str, torch.Tensor]:
-        t_proj = self._project_one_role(batch["target_feats"])
-        partner_projs = [self._project_one_role(pf)
-                         for pf in batch["partner_feats"]]
+        t_proj = self._project_one_role(
+            batch["target_feats"],
+            batch.get("target_modality_present"),
+        )
+        partner_modality_present = batch.get(
+            "partner_modality_present",
+            [None] * len(batch["partner_feats"]),
+        )
+        partner_projs = [
+            self._project_one_role(pf, present)
+            for pf, present in zip(
+                batch["partner_feats"], partner_modality_present,
+            )
+        ]
         partner_mask = batch.get("partner_present",
                                  [True] * len(partner_projs))
         partner_proj = self.partner_pool(partner_projs, partner_mask)

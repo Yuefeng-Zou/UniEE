@@ -15,11 +15,11 @@ NaN-safe AND sentinel-aware:
 
 Run example:
     python -m multimediate26.data.feature_extractor.compute_feature_stats \\
-        --npz-root multimediate26/data_processed/npz_v3 \\
+        --npz-root multimediate26/data_processed/npz_v4 \\
         --manifests multimediate26/manifests/noxi_train.jsonl \\
                     multimediate26/manifests/noxi_j_train.jsonl \\
-        --features openface2,openface3,openpose,w2vbert2,egemapsv2,xlmr,swin,clip \\
-        --out multimediate26/data_processed/npz_v3/__feature_stats.npz
+        --features openface2,openface3,openpose,w2vbert2,egemapsv2,whisper,xlmr,videomae,dino,swin,clip \\
+        --out multimediate26/experiments/_feature_stats/feature_stats_v4_whisper_full.npz
 """
 from __future__ import annotations
 
